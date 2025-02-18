@@ -936,7 +936,72 @@ def apply_p_sensitivity(dataframe, quasi_identifiers, sensitive_attribute, p_val
         traceback.print_exc()
         return None
 
+def apply_ck_safety(dataframe, quasi_identifiers, sensitive_attribute, c_value, k_value, hierarchy_rules, suppression_threshold):
+    """
+    Apply (c,k)-Safety to the dataset.
+    
+    Parameters:
+    - dataframe: Input DataFrame
+    - quasi_identifiers: List of quasi-identifier columns
+    - sensitive_attribute: Sensitive attribute column
+    - c_value: Maximum confidence threshold (in percentage, e.g., 60 for 60%)
+    - k_value: Minimum size of equivalence class
+    - hierarchy_rules: Dictionary containing generalization hierarchies
+    - suppression_threshold: Threshold for record suppression
+    
+    Returns:
+    - Anonymized DataFrame satisfying (c,k)-Safety
+    """
+    try:
+        # Step 1: Apply generalization
+        generalized_df = apply_generalization(dataframe, hierarchy_rules)
+        print("Generalized DataFrame:")
+        print(generalized_df.head())
 
+        # Step 2: Calculate equivalence class sizes
+        equivalence_class_size = generalized_df.groupby(quasi_identifiers).size().reset_index(name='class_size')
+        generalized_df = generalized_df.merge(equivalence_class_size, on=quasi_identifiers)
+
+        # Step 3: Remove equivalence classes smaller than k
+        small_classes_df = generalized_df[generalized_df['class_size'] < k_value]
+        num_to_delete = int(len(small_classes_df) * suppression_threshold)
+        indices_to_drop = small_classes_df.sample(num_to_delete, random_state=42).index
+        anonymized_df = generalized_df.drop(indices_to_drop).drop(columns=['class_size'])
+
+        # Step 4: Check confidence threshold for each equivalence class
+        non_compliant_indices = []
+        sensitive_attribute = sensitive_attribute[0]  # Get the first sensitive attribute
+
+        for name, group in anonymized_df.groupby(quasi_identifiers):
+            # Calculate confidence for each sensitive value in the group
+            value_counts = group[sensitive_attribute].value_counts()
+            total_records = len(group)
+            
+            # Check if any sensitive value exceeds the confidence threshold
+            max_confidence = (value_counts.max() / total_records) * 100
+            
+            if max_confidence > c_value:
+                print(f"Equivalence class {name} exceeds confidence threshold (c={c_value}%)")
+                print(f"Max confidence: {max_confidence}%")
+                non_compliant_indices.extend(group.index)
+
+        # Step 5: Apply suppression to records that violate c-confidence
+        if non_compliant_indices:
+            num_to_delete = int(len(non_compliant_indices) * suppression_threshold)
+            indices_to_delete = random.sample(non_compliant_indices, num_to_delete)
+            anonymized_df = anonymized_df.drop(index=indices_to_delete)
+
+        print(f"Anonymized DataFrame after (c,k)-Safety processing (c={c_value}%, k={k_value}):")
+        print(anonymized_df.head())
+        print(f"Final dataset size: {len(anonymized_df)} rows")
+
+        return anonymized_df
+
+    except Exception as e:
+        print(f"An error occurred during (c,k)-Safety processing: {e}")
+        import traceback
+        traceback.print_exc()
+        return None
 
 def read_file(file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
@@ -1010,6 +1075,11 @@ def anonymize():
     if p_value:
         p_value = int(p_value)
 
+    # Add c-value parameter for (c,k)-Safety
+    c_value = request.form.get('c', None)
+    if c_value:
+        c_value = float(c_value)
+
 
     quasi_identifiers = request.form.get('quasi_identifiers', 'Gender,Age,Zipcode').split(',')
     sensitive_column = request.form.get('sensitive_column', 'Disease').split(',')
@@ -1080,6 +1150,15 @@ def anonymize():
             resultPd = apply_p_sensitivity(dataPd, quasi_identifiers, sensitive_column, p_value, hierarchy_rules, suppression_threshold)
             if resultPd is None:
                 return jsonify({'error': 'Failed to apply p-sensitivity.'}), 400
+            return resultPd.to_json(orient='records')
+        
+        elif privacy_model == 'ck-safety':
+            if c_value is None:
+                return jsonify({'error': 'C value is required for (c,k)-Safety'}), 400
+            resultPd = apply_ck_safety(dataPd, quasi_identifiers, sensitive_column, 
+                                     c_value, k_value, hierarchy_rules, suppression_threshold)
+            if resultPd is None:
+                return jsonify({'error': 'Failed to apply (c,k)-Safety.'}), 400
             return resultPd.to_json(orient='records')
         
         # elif privacy_model == 'differential_privacy':

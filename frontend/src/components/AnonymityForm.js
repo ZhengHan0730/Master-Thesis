@@ -61,6 +61,7 @@ const AnonymityForm = ({ file }) => {
     formData.append("suppression_threshold", values.supRate || "");
     formData.append("quasi_identifiers", quasiIdentifiers.join(","));
     formData.append("hierarchy_rules", JSON.stringify(hierarchyRules));
+    formData.append("c", values.cValue || "");
 
     try {
       const response = await fetch("/anonymize", {
@@ -117,13 +118,15 @@ const AnonymityForm = ({ file }) => {
               <Option value="beta-likeness">β-Likeness</Option> {/* 添加 β-likeness */}
               <Option value="delta-disclosure">δ-Disclosure</Option> {/* Add new option */}
               <Option value="p-sensitivity">p-Sensitivity</Option>
+              <Option value="ck-safety">(c,k)-Safety</Option>
             </Select>
           </Form.Item>
 
           {(algorithm === "k-anonymity" ||
             algorithm === "l-diversity" ||
             algorithm === "t-closeness" ||
-            algorithm === "km-anonymity") && (
+            algorithm === "km-anonymity" ||
+            algorithm === "ck-safety") && (
               <Tooltip title="The k value in k-anonymity ensures that each record is indistinguishable from at least k-1 other records, protecting individuals from being uniquely identified.">
                 <Form.Item
                   name="kValue"
@@ -310,6 +313,29 @@ const AnonymityForm = ({ file }) => {
                     min={1}
                     style={{ width: "100%" }}
                     placeholder="Enter p-value"
+                  />
+                </Form.Item>
+              </Tooltip>
+            )}
+
+            {algorithm === "ck-safety" && (
+              <Tooltip title="The c value specifies the maximum confidence (in percentage) allowed for inferring any sensitive value within an equivalence class.">
+                <Form.Item
+                  name="cValue"
+                  label="C-value (%)"
+                  rules={[
+                    {
+                      required: true,
+                      message: "Please input the C-value!",
+                    },
+                  ]}
+                >
+                  <InputNumber
+                    min={0}
+                    max={100}
+                    step={1}
+                    style={{ width: "100%" }}
+                    placeholder="Enter C-value (e.g., 60 for 60%)"
                   />
                 </Form.Item>
               </Tooltip>
