@@ -43,8 +43,12 @@ const AnonymityForm = ({ file }) => {
   };
 
   const onFinish = async (values) => {
+    if (!file) {
+      message.error("No file selected. Please upload a file.");
+      return;
+    }
+  
     const formData = new FormData();
-
     formData.append("file", file);
     formData.append("sensitive_column", sensitiveColumn);
     formData.append("identifier", identifier);
@@ -55,30 +59,29 @@ const AnonymityForm = ({ file }) => {
     formData.append("m", values.mValue || "");
     formData.append("delta_min", values.deltaMin || "");
     formData.append("delta_max", values.deltaMax || "");
-    formData.append("beta", values.betaValue || ""); // add β-value
-    formData.append("delta_disclosure", values.deltaDisclosure || ""); // Add delta-disclosure value
-    formData.append("p", values.pValue || ""); // Add p-value
+    formData.append("beta", values.betaValue || "");
+    formData.append("delta_disclosure", values.deltaDisclosure || "");
+    formData.append("p", values.pValue || "");
     formData.append("suppression_threshold", values.supRate || "");
     formData.append("quasi_identifiers", quasiIdentifiers.join(","));
     formData.append("hierarchy_rules", JSON.stringify(hierarchyRules));
     formData.append("c", values.cValue || "");
-
+  
     try {
-      const response = await fetch("/anonymize", {
+      const response = await fetch("http://127.0.0.1:5000/api/anonymize", {
         method: "POST",
         body: formData,
+        credentials: "include", // 确保 CORS 允许跨域请求
       });
-
+  
       if (response.ok) {
         const result = await response.json();
         console.log("Anonymized Data:", result);
-
+  
         const header = Object.keys(result[0]).join(",") + "\n";
-        const rows = result
-          .map((row) => Object.values(row).join(","))
-          .join("\n");
+        const rows = result.map((row) => Object.values(row).join(",")).join("\n");
         const csvData = header + rows;
-
+  
         downloadCSV(csvData, "anonymized_data.csv");
         message.success("Data anonymization successful! CSV downloaded.");
       } else {
@@ -93,6 +96,7 @@ const AnonymityForm = ({ file }) => {
       );
     }
   };
+  
 
   return (
     <Layout style={{ minHeight: "100vh" }}>
