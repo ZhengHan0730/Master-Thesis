@@ -9,7 +9,8 @@ from collections import Counter
 from scipy.stats import entropy
 import random
 import json
-from diffprivlib.tools import mean
+from diffprivlib.tools import mean, count_nonzero, quantiles
+from diffprivlib.mechanisms import Laplace, Gaussian
 import numpy as np
 import pandas as pd
 from scipy.stats import entropy
@@ -1002,6 +1003,107 @@ def apply_ck_safety(dataframe, quasi_identifiers, sensitive_attribute, c_value, 
         import traceback
         traceback.print_exc()
         return None
+    
+def apply_differential_privacy(dataframe, epsilon, delta, quasi_identifiers, sensitive_columns, hierarchy_rules, budget=1.0, suppression_threshold=0.3):
+    """
+    Apply differential privacy to the dataset using diffprivlib library.
+    """
+    try:
+        # Create a copy of the original dataframe
+        anonymized_df = dataframe.copy()
+        
+        # First apply generalization to reduce dimensionality
+        generalized_df = apply_generalization(dataframe, hierarchy_rules)
+        
+        # Calculate the budget distribution among columns
+        qi_budget = budget * 0.5 / len(quasi_identifiers) if quasi_identifiers else 0
+        sensitive_budget = budget * 0.5 / len(sensitive_columns) if sensitive_columns else 0
+        
+        for column in generalized_df.columns:
+            try:
+                col_data = pd.to_numeric(generalized_df[column], errors='coerce')
+                is_numeric = not col_data.isna().all()
+            except:
+                is_numeric = False
+            
+            if is_numeric:
+                col_data = pd.to_numeric(generalized_df[column], errors='coerce')
+                
+                if col_data.isna().sum() / len(col_data) > 0.5:
+                    anonymized_df[column] = generalized_df[column]
+                    continue
+                
+                clean_data = col_data.dropna()
+                data_min = clean_data.min()
+                data_max = clean_data.max()
+                sensitivity = (data_max - data_min) * 0.01
+                
+                if column in quasi_identifiers:
+                    col_epsilon = epsilon * qi_budget
+                    laplace_mech = Laplace(epsilon=col_epsilon, sensitivity=sensitivity)
+                    noisy_data = col_data.copy()
+                    for idx in clean_data.index:
+                        noisy_data.at[idx] = laplace_mech.randomise(clean_data.at[idx])
+                    anonymized_df[column] = noisy_data
+                
+                elif column in sensitive_columns:
+                    col_epsilon = epsilon * sensitive_budget
+                    gaussian_mech = Gaussian(epsilon=col_epsilon, delta=delta, sensitivity=sensitivity)
+                    noisy_data = col_data.copy()
+                    for idx in clean_data.index:
+                        noisy_data.at[idx] = gaussian_mech.randomise(clean_data.at[idx])
+                    anonymized_df[column] = noisy_data
+                
+                else:
+                    anonymized_df[column] = generalized_df[column]
+            
+            else:
+                if column in quasi_identifiers or column in sensitive_columns:
+                    unique_values = generalized_df[column].dropna().unique()
+                    if len(unique_values) > 1:
+                        replace_prob = np.minimum(0.5, 1.0 / epsilon)
+                        noisy_data = generalized_df[column].copy()
+                        for idx in range(len(noisy_data)):
+                            if pd.notna(noisy_data.iloc[idx]) and np.random.random() < replace_prob:
+                                replacement_idx = np.random.choice(len(unique_values))
+                                noisy_data.iloc[idx] = unique_values[replacement_idx]
+                        anonymized_df[column] = noisy_data
+                    else:
+                        anonymized_df[column] = generalized_df[column]
+                else:
+                    anonymized_df[column] = generalized_df[column]
+        
+        if suppression_threshold > 0:
+            suppress_mask = np.random.random(size=len(anonymized_df)) < suppression_threshold
+            for column in anonymized_df.columns:
+                if column in quasi_identifiers:
+                    anonymized_df.loc[suppress_mask, column] = "Masked"
+                elif column in sensitive_columns:
+                    anonymized_df.loc[suppress_mask, column] = "Masked"
+        
+        print(f"Differentially Private DataFrame (epsilon={epsilon}, delta={delta}):")
+        print(anonymized_df.head())
+        
+        return anonymized_df
+    
+    except Exception as e:
+        import traceback
+        print("Error in differential privacy application:")
+        traceback.print_exc()
+        print(f"Error details: {str(e)}")
+        return None
+
+    
+def dp_variance(data, epsilon=1.0):
+    """
+    计算数据的差分隐私方差
+    :param data: 需要计算方差的数据列表
+    :param epsilon: 隐私预算
+    :return: 计算出的 DP 方差
+    """
+    dp_mean_value = mean(data, epsilon=epsilon / 2)  # 计算 DP 均值
+    dp_square_mean = mean(np.square(data), epsilon=epsilon / 2)  # 计算平方的均值
+    return dp_square_mean - dp_mean_value**2  # 方差公式：E(X²) - (E(X))²
 
 def read_file(file_path):
     file_extension = os.path.splitext(file_path)[1].lower()
@@ -1080,6 +1182,19 @@ def anonymize():
     if c_value:
         c_value = float(c_value)
 
+    # Add delta parameter for differential privacy
+    delta = request.form.get('delta', None)
+    if delta:
+        delta = float(delta)
+    else:
+        delta = 1e-6  # Default delta value for differential privacy
+
+    # Add budget parameter for differential privacy
+    budget = request.form.get('budget', None)
+    if budget:
+        budget = float(budget)
+    else:
+        budget = 1.0  # Default budget value (100%)
 
     quasi_identifiers = request.form.get('quasi_identifiers', 'Gender,Age,Zipcode').split(',')
     sensitive_column = request.form.get('sensitive_column', 'Disease').split(',')
@@ -1161,13 +1276,16 @@ def anonymize():
                 return jsonify({'error': 'Failed to apply (c,k)-Safety.'}), 400
             return resultPd.to_json(orient='records')
         
-        # elif privacy_model == 'differential_privacy':
-        #     if not epsilon:
-        #         return jsonify({'error': 'Epsilon value is required for differential privacy'}), 400
-        #     delta = request.form.get('delta', '1e-6')  # 默认delta为1e-6
-        #     budget = request.form.get('budget', '100')  # 默认预算为100%
-        #     resultPd = apply_differential_privacy(dataPd, epsilon, float(delta), quasi_identifiers, sensitive_column,hierarchy_rules, float(budget), suppression_threshold)
-        #     return resultPd.to_json(orient='records')
+        elif privacy_model == 'differential_privacy':
+            if not epsilon:
+                return jsonify({'error': 'Epsilon value is required for differential privacy'}), 400
+            
+            resultPd = apply_differential_privacy(dataPd, epsilon, delta, quasi_identifiers, 
+                                                sensitive_column, hierarchy_rules, budget, suppression_threshold)
+            if resultPd is None:
+                return jsonify({'error': 'Failed to apply differential privacy.'}), 400
+            
+            return resultPd.to_json(orient='records')
         
         else:
             return jsonify({'error': f"Unsupported privacy model: {privacy_model}"}), 400

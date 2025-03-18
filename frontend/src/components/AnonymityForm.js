@@ -66,6 +66,9 @@ const AnonymityForm = ({ file }) => {
     formData.append("quasi_identifiers", quasiIdentifiers.join(","));
     formData.append("hierarchy_rules", JSON.stringify(hierarchyRules));
     formData.append("c", values.cValue || "");
+    formData.append("e", values.epsilonValue || "");
+    formData.append("delta", values.deltaValue || "");
+    formData.append("budget", values.budgetValue || "");
   
     try {
       const response = await fetch("http://127.0.0.1:5000/api/anonymize", {
@@ -123,6 +126,7 @@ const AnonymityForm = ({ file }) => {
               <Option value="delta-disclosure">δ-Disclosure</Option> {/* Add new option */}
               <Option value="p-sensitivity">p-Sensitivity</Option>
               <Option value="ck-safety">(c,k)-Safety</Option>
+              <Option value="differential_privacy">Differential Privacy</Option>
             </Select>
           </Form.Item>
 
@@ -343,6 +347,73 @@ const AnonymityForm = ({ file }) => {
                   />
                 </Form.Item>
               </Tooltip>
+            )}
+
+            {algorithm === "differential_privacy" && (
+              <>
+                <Tooltip title="Epsilon controls the privacy-utility trade-off. Lower values provide stronger privacy but less accuracy.">
+                  <Form.Item
+                    name="epsilonValue"
+                    label="ε (Epsilon) Value"
+                    rules={[
+                      {
+                        required: algorithm === "differential_privacy",
+                        message: "Please input the Epsilon value!",
+                      },
+                    ]}
+                  >
+                    <InputNumber
+                      min={0.01}
+                      max={10}
+                      step={0.1}
+                      style={{ width: "100%" }}
+                      placeholder="Enter Epsilon value (e.g., 0.5)"
+                    />
+                  </Form.Item>
+                </Tooltip>
+                
+                <Tooltip title="Delta specifies the probability of the privacy guarantee being violated. Typically a very small value.">
+                  <Form.Item
+                    name="deltaValue"
+                    label="δ (Delta) Value"
+                    rules={[
+                      {
+                        required: false,
+                        message: "Please input the Delta value!",
+                      },
+                    ]}
+                  >
+                    <InputNumber
+                      min={0}
+                      max={1}
+                      step={0.000001}
+                      style={{ width: "100%" }}
+                      placeholder="Enter Delta value (e.g., 0.000001)"
+                    />
+                  </Form.Item>
+                </Tooltip>
+                
+                <Tooltip title="Budget allocation determines how the privacy budget is distributed across different operations (0-1).">
+                  <Form.Item
+                    name="budgetValue"
+                    label="Budget Allocation"
+                    rules={[
+                      {
+                        required: false,
+                        message: "Please input the budget allocation!",
+                      },
+                    ]}
+                  >
+                    <InputNumber
+                      min={0}
+                      max={1}
+                      step={0.01}
+                      style={{ width: "100%" }}
+                      placeholder="Enter budget allocation (default: 1.0)"
+                    />
+                  </Form.Item>
+                </Tooltip>
+              </>
             )}
 
           <Tooltip title="Suppression Rate refers to the percentage of data values removed or hidden during anonymization to meet privacy requirements.">
