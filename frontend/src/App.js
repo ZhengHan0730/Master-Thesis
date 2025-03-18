@@ -7,6 +7,7 @@ import TermsAndConditions from './components/TermsAndConditions'; // 导入新�
 import Home from './components/Home'; // 导入新的页面组件
 import Demo from './components/Demo'; // 导入新的页面组件
 import Contact from './components/Contact'; // 导入新的页面组件
+import DataQualityEvaluation from "./components/DataQualityEvaluation"; //数据质量评估页面
 
 function App() {
   const [file, setFile] = useState(null);  // 将文件状态提升到 App 组件
@@ -21,6 +22,7 @@ function App() {
         <Route path="/hierarchy" element={<HierarchyForm  file={file} />} />
         <Route path="/anonymity" element={<AnonymityForm   file={file}/>} />
         <Route path="/terms" element={<TermsAndConditions />} /> 
+        <Route path="/evaluate" element={<DataQualityEvaluation />} /> 
       </Routes>
     </Router>
   );
