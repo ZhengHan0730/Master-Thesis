@@ -1,177 +1,226 @@
+import React, { useState } from "react";
 import {
-    Layout,
-    Form,
-    Upload,
-    Button,
-    Typography,
-    message,
-    Select,
-    Card,
-    Checkbox,
-  } from "antd";
-  import { UploadOutlined } from "@ant-design/icons";
-  import AppHeader from "./Header";
-  import React, { useState } from "react";
+  Layout,
+  Form,
+  Upload,
+  Button,
+  Typography,
+  message,
+  Card,
+  Checkbox,
+  Table,
+} from "antd";
+import { UploadOutlined, DownloadOutlined } from "@ant-design/icons";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend } from "recharts";
+import AppHeader from "./Header";
+import "./DataQualityEvaluation.css";
+
+const { Title } = Typography;
+const { Content } = Layout;
+
+const statisticalMethods = ["mean", "median", "variance"];
+
+const DataQualityEvaluation = () => {
+  const [originalFile, setOriginalFile] = useState(null);
+  const [anonymizedFile, setAnonymizedFile] = useState(null);
+  const [columnOptions, setColumnOptions] = useState([]);
+  const [selectedColumns, setSelectedColumns] = useState([]);
+  const [selectedStatisticalMethods, setSelectedStatisticalMethods] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [resultData, setResultData] = useState([]);
+  const [resultId, setResultId] = useState(null);
+
+  const handleFileChange = (info, type) => {
+    const fileList = info.fileList;
+    const fileObj = fileList[fileList.length - 1]?.originFileObj;
   
-  const { Title } = Typography;
-  const { Content } = Layout;
-  const { Option } = Select;
+    if (!fileObj) {
+      message.error("上传失败，文件未正确获取！");
+      return;
+    }
   
-  const statisticalMethods = [
-    "Wasserstein Distance",
-    "KS-Similarity",
-    "Pearson & Spearman",
-    "JS-Divergence",
-    "Mutual Information",
-    "Mean",
-    "Median",
-    "Variance",
-  ];
+    if (type === "original") {
+      setOriginalFile(fileObj);
   
-  const mlModels = ["Random Forest", "SVM", "MLP"];
-  const mlMetrics = ["Accuracy", "F1 Score", "Precision"];
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        const text = e.target.result;
+        const firstLine = text.split("\n")[0];
+        const columns = firstLine.split(/,|\t/).map((c) => c.trim());
+        setColumnOptions(columns);
+      };
+      reader.readAsText(fileObj);
+    } else if (type === "anonymized") {
+      setAnonymizedFile(fileObj);
+    }
   
-  const DataQualityEvaluation = () => {
-    const [originalFile, setOriginalFile] = useState(null);
-    const [anonymizedFile, setAnonymizedFile] = useState(null);
-    const [selectedMetric, setSelectedMetric] = useState(null);
-    const [selectedStatisticalMethods, setSelectedStatisticalMethods] = useState([]);
-    const [selectedMLModels, setSelectedMLModels] = useState([]);
-    const [selectedMLMetrics, setSelectedMLMetrics] = useState([]);
-    const [loading, setLoading] = useState(false);
-  
-    const handleFileChange = (info, type) => {
-      if (info.file.status === "done") {
-        if (type === "original") {
-          setOriginalFile(info.file.originFileObj);
-        } else {
-          setAnonymizedFile(info.file.originFileObj);
-        }
-        message.success(`${info.file.name} uploaded successfully`);
-      }
-    };
-  
-    const handleEvaluate = async () => {
-      if (!originalFile || !anonymizedFile || !selectedMetric) {
-        message.error("请上传文件并选择评估方法！");
-        return;
-      }
-  
-      setLoading(true);
-      const formData = new FormData();
-      formData.append("original_file", originalFile);
-      formData.append("anonymized_file", anonymizedFile);
-      formData.append("metric", selectedMetric);
-  
-      if (selectedMetric === "statistical") {
-        formData.append("statistical_methods", JSON.stringify(selectedStatisticalMethods));
-      }
-      if (selectedMetric === "ml_utility") {
-        formData.append("ml_models", JSON.stringify(selectedMLModels));
-        formData.append("ml_metrics", JSON.stringify(selectedMLMetrics));
-      }
-  
-      try {
-        const response = await fetch("http://127.0.0.1:5000/api/evaluate", {
-          method: "POST",
-          body: formData,
-        });
-  
-        if (response.ok) {
-          message.success("数据质量评估成功！");
-        } else {
-          const error = await response.json();
-          message.error(`评估失败: ${error.error}`);
-        }
-      } catch (error) {
-        message.error("网络错误，请检查连接并重试！");
-      }
-  
-      setLoading(false);
-    };
-  
-    return (
-      <Layout style={{ minHeight: "100vh", backgroundColor: "#f8f9fa" }}>
-        <AppHeader />
-        <Content style={{ display: "flex", justifyContent: "center", padding: "60px 20px" }}>
-          <Card className="evaluation-card">
-            <Title level={1} className="evaluation-title">Data Quality Evaluation</Title>
-            <Form layout="vertical">
-              {/* 上传原始数据 */}
-              <Form.Item label="Upload Original Data (CSV/TSV)">
-                <Upload
-                  beforeUpload={() => false}
-                  onChange={(info) => handleFileChange(info, "original")}
-                  accept=".csv,.tsv"
-                  showUploadList={true}
-                >
-                  <Button icon={<UploadOutlined />}>Click to Upload</Button>
-                </Upload>
-              </Form.Item>
-  
-              {/* 上传匿名化数据 */}
-              <Form.Item label="Upload Anonymized Data (CSV/TSV)">
-                <Upload
-                  beforeUpload={() => false}
-                  onChange={(info) => handleFileChange(info, "anonymized")}
-                  accept=".csv,.tsv"
-                  showUploadList={true}
-                >
-                  <Button icon={<UploadOutlined />}>Click to Upload</Button>
-                </Upload>
-              </Form.Item>
-  
-              {/* 选择评估方法 */}
-              <Form.Item label="Select Evaluation Method">
-                <Select
-                  placeholder="Choose an evaluation method"
-                  onChange={(value) => setSelectedMetric(value)}
-                >
-                  <Option value="statistical">Statistical Similarity</Option>
-                  <Option value="ml_utility">Machine Learning Utility</Option>
-                </Select>
-              </Form.Item>
-  
-              {/* 当选择 Statistical Similarity 时，显示详细方法 */}
-              {selectedMetric === "statistical" && (
-                <Form.Item label="Select Statistical Methods">
-                  <Checkbox.Group
-                    options={statisticalMethods}
-                    onChange={setSelectedStatisticalMethods}
-                  />
-                </Form.Item>
-              )}
-  
-              {/* 当选择 Machine Learning Utility 时，显示模型和评估指标 */}
-              {selectedMetric === "ml_utility" && (
-                <>
-                  <Form.Item label="Select Machine Learning Models">
-                    <Checkbox.Group options={mlModels} onChange={setSelectedMLModels} />
-                  </Form.Item>
-  
-                  <Form.Item label="Select Evaluation Metrics">
-                    <Checkbox.Group options={mlMetrics} onChange={setSelectedMLMetrics} />
-                  </Form.Item>
-                </>
-              )}
-  
-              {/* 提交按钮 */}
-              <Form.Item>
-                <Button
-                  onClick={handleEvaluate}
-                  loading={loading}
-                  block
-                  className="submit-button"
-                >
-                  {loading ? "Evaluating..." : "Submit Evaluation"}
-                </Button>
-              </Form.Item>
-            </Form>
-          </Card>
-        </Content>
-      </Layout>
-    );
+    message.success(`${info.file.name} uploaded successfully`);
   };
   
-  export default DataQualityEvaluation;
+
+  const handleEvaluate = async () => {
+    if (
+      !originalFile ||
+      !anonymizedFile ||
+      selectedStatisticalMethods.length === 0 ||
+      selectedColumns.length === 0
+    ) {
+      message.error("请上传两个文件并选择列和评估方法！");
+      return;
+    }
+
+    setLoading(true);
+    const formData = new FormData();
+    formData.append("original_file", originalFile);
+    formData.append("anonymized_file", anonymizedFile);
+    formData.append("columns", selectedColumns.join(","));
+    formData.append("metrics", selectedStatisticalMethods.join(","));
+
+    try {
+      const response = await fetch("http://127.0.0.1:5000/api/evaluation", {
+        method: "POST",
+        body: formData,
+        credentials: "include", // 确保 CORS 允许跨域请求
+      });
+    
+      if (!response.ok) {
+        const error = await response.json();
+        message.error(`评估失败: ${error.error}`);
+        return;
+      }
+    
+      let result;
+      try {
+        result = await response.json();  // 👈 添加 try
+      } catch (err) {
+        message.error("后端返回内容不是有效的 JSON");
+        return;
+      }
+    
+      setResultData(result.summary || []);
+      setResultId(result.result_id);
+      message.success("数据质量评估成功！");
+    } catch (error) {
+      console.error("Network error:", error);
+      message.error("网络错误，请检查连接并重试！");
+    }
+    
+
+    setLoading(false);
+  };
+
+  const handleDownloadCSV = () => {
+    if (!resultId) return;
+    const url = `http://127.0.0.1:5000/api/quality/result/${resultId}/download`;
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `quality_result_${resultId}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
   
+
+  return (
+    <Layout className="quality-layout">
+      <AppHeader />
+      <Content className="quality-content">
+        <Card className="evaluation-card">
+          <Title level={2}>Data Quality Evaluation</Title>
+          <Form layout="vertical">
+            <Form.Item label="Upload Original Data (CSV/TSV)">
+              <Upload
+                beforeUpload={() => false}
+                onChange={(info) => handleFileChange(info, "original")}
+                accept=".csv,.tsv"
+                showUploadList={true}
+              >
+                <Button icon={<UploadOutlined />}>Click to Upload</Button>
+              </Upload>
+            </Form.Item>
+
+            <Form.Item label="Upload Anonymized Data (CSV/TSV)">
+              <Upload
+                beforeUpload={() => false}
+                onChange={(info) => handleFileChange(info, "anonymized")}
+                accept=".csv,.tsv"
+                showUploadList={true}
+              >
+                <Button icon={<UploadOutlined />}>Click to Upload</Button>
+              </Upload>
+            </Form.Item>
+
+            <Form.Item label="Select Columns for Evaluation">
+              <Checkbox.Group
+                options={columnOptions}
+                value={selectedColumns}
+                onChange={setSelectedColumns}
+              />
+            </Form.Item>
+
+            <Form.Item label="Select Statistical Methods">
+              <Checkbox.Group
+                options={statisticalMethods.map((m) => ({ label: m, value: m }))}
+                value={selectedStatisticalMethods}
+                onChange={setSelectedStatisticalMethods}
+              />
+            </Form.Item>
+
+            <Form.Item>
+              <Button type="primary" onClick={handleEvaluate} loading={loading} block>
+                {loading ? "Evaluating..." : "Submit Evaluation"}
+              </Button>
+            </Form.Item>
+          </Form>
+
+          {resultData.length > 0 && (
+            <>
+              <Title level={4} style={{ marginTop: 30 }}>
+                Evaluation Results (ID: {resultId})
+              </Title>
+
+              <Button
+                icon={<DownloadOutlined />}
+                onClick={handleDownloadCSV}
+                style={{ marginBottom: 16 }}
+              >
+                Download CSV
+              </Button>
+
+              <Table
+                dataSource={resultData.map((item, index) => ({ key: index, ...item }))}
+                pagination={false}
+                bordered
+                columns={[
+                  { title: "Column", dataIndex: "column", key: "column" },
+                  { title: "Metric", dataIndex: "metric", key: "metric" },
+                  { title: "Original", dataIndex: "original", key: "original" },
+                  { title: "Anonymized", dataIndex: "anonymized", key: "anonymized" },
+                  { title: "Difference", dataIndex: "difference", key: "difference" },
+                  { title: "Error", dataIndex: "error", key: "error" },
+                ]}
+              />
+
+              <BarChart
+                width={700}
+                height={300}
+                data={resultData.filter((r) => !r.error)}
+                style={{ marginTop: 40 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="column" />
+                <YAxis />
+                <Tooltip />
+                <Legend />
+                <Bar dataKey="original" fill="#8884d8" name="Original" />
+                <Bar dataKey="anonymized" fill="#82ca9d" name="Anonymized" />
+              </BarChart>
+            </>
+          )}
+        </Card>
+      </Content>
+    </Layout>
+  );
+};
+
+export default DataQualityEvaluation;
