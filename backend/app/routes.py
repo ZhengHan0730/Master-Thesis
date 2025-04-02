@@ -1184,58 +1184,123 @@ def calculate_variance_diff(original_df, anonymized_df, columns_to_compare):
             result.append({'column': col, 'metric': 'variance', 'error': str(e)})
     return result
 
-@bp.route('/evaluation', methods=['POST'])
-def data_quality_evaluation():
-    if 'original_file' not in request.files or 'anonymized_file' not in request.files:
-        return jsonify({'error': '必须同时上传原始文件和匿名化文件'}), 400
-
-    original_file = request.files['original_file']
-    anonymized_file = request.files['anonymized_file']
-    columns_to_compare = request.form.get('columns')
-    metrics = request.form.get('metrics', 'mean,median,variance').split(',')
-
-    if not columns_to_compare:
-        return jsonify({'error': '必须指定用于比较的列'}), 400
-
-    columns_to_compare = columns_to_compare.split(',')
-
-    # ✅ 文件扩展名校验
-    if not allowed_file(original_file.filename) or not allowed_file(anonymized_file.filename):
-        return jsonify({'error': '只支持 .csv 或 .tsv 文件格式'}), 400
-
+# 区间值预处理
+def parse_range(value):
+    """处理各种不同格式的区间值，返回中点值"""
+    # 如果是None或不是字符串，尝试直接转为浮点数
+    if not isinstance(value, str):
+        try:
+            return float(value)
+        except:
+            return np.nan
+    
+    # 处理 "x-y" 格式
+    if '-' in value:
+        try:
+            start, end = map(float, value.split('-'))
+            return (start + end) / 2
+        except:
+            pass
+    
+    # 处理 "[x,y]" 或 "(x,y)" 格式
+    if (',' in value) and (value.startswith('[') or value.startswith('(')) and (value.endswith(']') or value.endswith(')')):
+        try:
+            # 移除括号
+            clean_value = value.replace('[', '').replace(']', '').replace('(', '').replace(')', '')
+            start, end = map(float, clean_value.split(','))
+            return (start + end) / 2
+        except:
+            pass
+    
+    # 尝试直接转换为浮点数
     try:
-        original_df = pd.read_csv(original_file, on_bad_lines='skip')
-        anonymized_df = pd.read_csv(anonymized_file, on_bad_lines='skip')
-    except Exception as e:
-        return jsonify({'error': f'文件读取失败，请检查格式：{str(e)}'}), 400
+        return float(value)
+    except:
+        return np.nan
 
-    # ✅ 检查列是否存在
-    missing_cols = [col for col in columns_to_compare if col not in original_df.columns or col not in anonymized_df.columns]
-    if missing_cols:
+# 对列进行预处理
+def preprocess_column(column):
+    return column.apply(parse_range)
+
+@bp.route('/evaluation', methods=['POST']) 
+def data_quality_evaluation():     
+    if 'original_file' not in request.files or 'anonymized_file' not in request.files:         
+        return jsonify({'error': '必须同时上传原始文件和匿名化文件'}), 400      
+    
+    original_file = request.files['original_file']     
+    anonymized_file = request.files['anonymized_file']     
+    columns_to_compare = request.form.get('columns')     
+    metrics = request.form.get('metrics', 'mean,median,variance').split(',')      
+    
+    if not columns_to_compare:         
+        return jsonify({'error': '必须指定用于比较的列'}), 400      
+    
+    columns_to_compare = columns_to_compare.split(',')      
+    
+    # 文件扩展名校验     
+    if not allowed_file(original_file.filename) or not allowed_file(anonymized_file.filename):         
+        return jsonify({'error': '只支持 .csv 或 .tsv 文件格式'}), 400      
+    
+    try:         
+        original_df = pd.read_csv(original_file, on_bad_lines='skip')         
+        anonymized_df = pd.read_csv(anonymized_file, on_bad_lines='skip')     
+    except Exception as e:         
+        return jsonify({'error': f'文件读取失败，请检查格式：{str(e)}'}), 400      
+    
+    # 检查列是否存在     
+    missing_cols = [col for col in columns_to_compare if col not in original_df.columns or col not in anonymized_df.columns]     
+    if missing_cols:         
         return jsonify({'error': f'以下列在文件中不存在: {missing_cols}'}), 400
-
-    # ✅ 如果选择了数值统计方法，验证是否为数值列
+    
+    # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
     if any(metric in metrics for metric in ['mean', 'median', 'variance']):
+        # 收集非数值类型的列
+        non_numeric_cols = [
+            col for col in columns_to_compare
+            if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
+        ]
+        
+        # 对非数值类型的列尝试区间处理
+        for col in non_numeric_cols:
+            try:
+                # 直接预处理区间型数据，不做额外检测
+                # 因为即使不是区间格式，parse_range也会尝试转为数值
+                original_df[col] = preprocess_column(original_df[col])
+                anonymized_df[col] = preprocess_column(anonymized_df[col])
+                
+                # 确保转换后是数值类型，处理为float类型
+                original_df[col] = pd.to_numeric(original_df[col], errors='coerce')
+                anonymized_df[col] = pd.to_numeric(anonymized_df[col], errors='coerce')
+                
+                # 将列显式转换为float类型
+                original_df[col] = original_df[col].astype(float)
+                anonymized_df[col] = anonymized_df[col].astype(float)
+            except Exception as e:
+                return jsonify({'error': f'数据预处理失败: {col}, 错误: {str(e)}'}), 400
+        
+        # 再次验证是否有非数值类型的列
         numeric_check_failed = [
             col for col in columns_to_compare
             if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
         ]
+        
         if numeric_check_failed:
-            return jsonify({'error': f'以下列不是数值类型，无法计算统计指标: {numeric_check_failed}'}), 400
-
-    results = []
-    if 'mean' in metrics:
-        results.extend(calculate_mean_diff(original_df, anonymized_df, columns_to_compare))
-    if 'median' in metrics:
-        results.extend(calculate_median_diff(original_df, anonymized_df, columns_to_compare))
-    if 'variance' in metrics:
-        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))
-
-    result_id = str(uuid.uuid4())
-    quality_results[result_id] = results
-
+            return jsonify({'error': f'以下列不是数值类型，无法计算统计指标: {numeric_check_failed}'}), 400      
+    
+    results = []     
+    if 'mean' in metrics:         
+        results.extend(calculate_mean_diff(original_df, anonymized_df, columns_to_compare))     
+    if 'median' in metrics:         
+        results.extend(calculate_median_diff(original_df, anonymized_df, columns_to_compare))     
+    if 'variance' in metrics:         
+        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))      
+    
+    result_id = str(uuid.uuid4())     
+    quality_results[result_id] = results      
+    
     return jsonify({'result_id': result_id, 'summary': results})
 
+# 获取评估后结果
 @bp.route('/quality/result/<result_id>', methods=['GET'])
 def get_quality_result(result_id):
     if result_id in quality_results:
@@ -1243,6 +1308,7 @@ def get_quality_result(result_id):
     else:
         return jsonify({'error': 'Result ID not found'}), 404
 
+# 评估结果下载
 @bp.route('/quality/result/<result_id>/download', methods=['GET'])
 def download_quality_result(result_id):
     if result_id not in quality_results:
