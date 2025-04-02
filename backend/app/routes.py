@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify
+from flask import request, jsonify, session, send_file, Blueprint
 import pandas as pd
 import os
 import numpy as np
@@ -18,9 +18,14 @@ import numpy as np
 import pandas as pd
 from scipy.stats import wasserstein_distance
 from collections import Counter
+import uuid
+import io
 
 
 bp = Blueprint('main', __name__)
+
+# 存储评估结果（内存示例，可换为数据库）
+quality_results = {}
 
 pandas2ri.activate()
 
@@ -1115,14 +1120,148 @@ def read_file(file_path):
     else:
         raise ValueError("Unsupported file format. Please use a .csv or .tsv file.")
 
-# def clean_columns(dataframe):
-#     # 尝试将 max_glu_serum 和 A1Cresult 转换为数值类型，无法转换的部分将被设置为 NaN
-#     dataframe['max_glu_serum'] = pd.to_numeric(dataframe['max_glu_serum'], errors='coerce')
-#     dataframe['A1Cresult'] = pd.to_numeric(dataframe['A1Cresult'], errors='coerce')
-#     return dataframe
+# data quality evaluation method
+def allowed_file(filename):
+    return filename.endswith('.csv') or filename.endswith('.tsv')
 
-# # 然后在 apply_generalization 之前调用 clean_columns
-# dataPd = clean_columns(dataPd)
+def calculate_mean_diff(original_df, anonymized_df, columns_to_compare):
+    result = []
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce')
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce')
+            orig_mean = orig_col.mean()
+            anon_mean = anon_col.mean()
+            mean_diff = abs(orig_mean - anon_mean)
+            result.append({
+                'column': col,
+                'metric': 'mean',
+                'original': round(orig_mean, 4),
+                'anonymized': round(anon_mean, 4),
+                'difference': round(mean_diff, 4)
+            })
+        except Exception as e:
+            result.append({'column': col, 'metric': 'mean', 'error': str(e)})
+    return result
+
+def calculate_median_diff(original_df, anonymized_df, columns_to_compare):
+    result = []
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce')
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce')
+            orig_median = orig_col.median()
+            anon_median = anon_col.median()
+            median_diff = abs(orig_median - anon_median)
+            result.append({
+                'column': col,
+                'metric': 'median',
+                'original': round(orig_median, 4),
+                'anonymized': round(anon_median, 4),
+                'difference': round(median_diff, 4)
+            })
+        except Exception as e:
+            result.append({'column': col, 'metric': 'median', 'error': str(e)})
+    return result
+
+def calculate_variance_diff(original_df, anonymized_df, columns_to_compare):
+    result = []
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce')
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce')
+            orig_var = orig_col.var()
+            anon_var = anon_col.var()
+            var_diff = abs(orig_var - anon_var)
+            result.append({
+                'column': col,
+                'metric': 'variance',
+                'original': round(orig_var, 4),
+                'anonymized': round(anon_var, 4),
+                'difference': round(var_diff, 4)
+            })
+        except Exception as e:
+            result.append({'column': col, 'metric': 'variance', 'error': str(e)})
+    return result
+
+@bp.route('/evaluation', methods=['POST'])
+def data_quality_evaluation():
+    if 'original_file' not in request.files or 'anonymized_file' not in request.files:
+        return jsonify({'error': '必须同时上传原始文件和匿名化文件'}), 400
+
+    original_file = request.files['original_file']
+    anonymized_file = request.files['anonymized_file']
+    columns_to_compare = request.form.get('columns')
+    metrics = request.form.get('metrics', 'mean,median,variance').split(',')
+
+    if not columns_to_compare:
+        return jsonify({'error': '必须指定用于比较的列'}), 400
+
+    columns_to_compare = columns_to_compare.split(',')
+
+    # ✅ 文件扩展名校验
+    if not allowed_file(original_file.filename) or not allowed_file(anonymized_file.filename):
+        return jsonify({'error': '只支持 .csv 或 .tsv 文件格式'}), 400
+
+    try:
+        original_df = pd.read_csv(original_file, on_bad_lines='skip')
+        anonymized_df = pd.read_csv(anonymized_file, on_bad_lines='skip')
+    except Exception as e:
+        return jsonify({'error': f'文件读取失败，请检查格式：{str(e)}'}), 400
+
+    # ✅ 检查列是否存在
+    missing_cols = [col for col in columns_to_compare if col not in original_df.columns or col not in anonymized_df.columns]
+    if missing_cols:
+        return jsonify({'error': f'以下列在文件中不存在: {missing_cols}'}), 400
+
+    # ✅ 如果选择了数值统计方法，验证是否为数值列
+    if any(metric in metrics for metric in ['mean', 'median', 'variance']):
+        numeric_check_failed = [
+            col for col in columns_to_compare
+            if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
+        ]
+        if numeric_check_failed:
+            return jsonify({'error': f'以下列不是数值类型，无法计算统计指标: {numeric_check_failed}'}), 400
+
+    results = []
+    if 'mean' in metrics:
+        results.extend(calculate_mean_diff(original_df, anonymized_df, columns_to_compare))
+    if 'median' in metrics:
+        results.extend(calculate_median_diff(original_df, anonymized_df, columns_to_compare))
+    if 'variance' in metrics:
+        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))
+
+    result_id = str(uuid.uuid4())
+    quality_results[result_id] = results
+
+    return jsonify({'result_id': result_id, 'summary': results})
+
+@bp.route('/quality/result/<result_id>', methods=['GET'])
+def get_quality_result(result_id):
+    if result_id in quality_results:
+        return jsonify(quality_results[result_id])
+    else:
+        return jsonify({'error': 'Result ID not found'}), 404
+
+@bp.route('/quality/result/<result_id>/download', methods=['GET'])
+def download_quality_result(result_id):
+    if result_id not in quality_results:
+        return jsonify({'error': 'Result ID not found'}), 404
+
+    result_df = pd.DataFrame(quality_results[result_id])
+    output = io.StringIO()
+    result_df.to_csv(output, index=False)
+    output.seek(0)
+
+    return send_file(
+        io.BytesIO(output.getvalue().encode()),
+        mimetype='text/csv',
+        as_attachment=True,
+        download_name=f'quality_result_{result_id}.csv'
+    )
+
+
+
 
 
 @bp.route('/anonymize', methods=['POST'])
