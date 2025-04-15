@@ -22,6 +22,8 @@ import uuid
 import io
 from datetime import datetime
 from scipy.stats import ks_2samp,  pearsonr, spearmanr
+from scipy.spatial.distance import jensenshannon
+from collections import Counter
 
 
 bp = Blueprint('main', __name__)
@@ -963,6 +965,65 @@ def calculate_spearman(original_df, anonymized_df, columns_to_compare):
             })
 
     return results
+# 对于文本类型的字段的统计方法js_divergence
+def calculate_js_divergence(original_df, anonymized_df, columns_to_compare):
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_series = original_df[col].dropna().astype(str)
+            anon_series = anonymized_df[col].dropna().astype(str)
+
+            # 计算词频分布
+            orig_counts = Counter(orig_series)
+            anon_counts = Counter(anon_series)
+
+            all_keys = set(orig_counts.keys()).union(set(anon_counts.keys()))
+            orig_dist = np.array([orig_counts.get(k, 0) for k in all_keys], dtype=float)
+            anon_dist = np.array([anon_counts.get(k, 0) for k in all_keys], dtype=float)
+
+            if orig_dist.sum() == 0 or anon_dist.sum() == 0:
+                results.append({
+                    'column': col,
+                    'metric': 'js-divergence',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '分布为空，无法计算 JS 散度'
+                })
+                continue
+
+            # 归一化为概率分布
+            orig_dist /= orig_dist.sum()
+            anon_dist /= anon_dist.sum()
+
+            # 计算 Jensen-Shannon Divergence
+            jsd = jensenshannon(orig_dist, anon_dist) ** 2
+
+            # 返回 top 5 的原始和匿名化分布（可视化用途）
+            top_orig = dict(sorted(orig_counts.items(), key=lambda x: -x[1])[:5])
+            top_anon = dict(sorted(anon_counts.items(), key=lambda x: -x[1])[:5])
+
+            results.append({
+                'column': col,
+                'metric': 'js-divergence',
+                'original': top_orig,
+                'anonymized': top_anon,
+                'difference': round(jsd, 6)
+            })
+
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'js-divergence',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
 
 
 
@@ -1081,8 +1142,14 @@ def data_quality_evaluation():
     if missing_cols:         
         return jsonify({'error': f'以下列在文件中不存在: {missing_cols}'}), 400
     
+    # 区分数值型统计方法和文本型统计方法
+    numeric_metrics = ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']
+    text_metrics = ['js-divergence']
+    
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
-    if any(metric in metrics for metric in ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']):
+    numeric_columns_to_compare = columns_to_compare.copy()
+    
+    if any(metric in metrics for metric in numeric_metrics):
         # 收集非数值类型的列
         non_numeric_cols = [
             col for col in columns_to_compare
@@ -1102,7 +1169,7 @@ def data_quality_evaluation():
                 anonymized_df[processed_col_name] = pd.to_numeric(anonymized_df[processed_col_name], errors='coerce').astype(float)
 
                 # 更新列名用于后续比较
-                columns_to_compare = [processed_col_name if c == col else c for c in columns_to_compare]
+                numeric_columns_to_compare = [processed_col_name if c == col else c for c in numeric_columns_to_compare]
 
             except Exception as e:
                 return jsonify({'error': f'数据预处理失败: {col}, 错误: {str(e)}'}), 400
@@ -1110,28 +1177,33 @@ def data_quality_evaluation():
         
         # 再次验证是否有非数值类型的列
         numeric_check_failed = [
-            col for col in columns_to_compare
+            col for col in numeric_columns_to_compare
             if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
         ]
         
-        if numeric_check_failed:
+        if numeric_check_failed and any(metric in metrics for metric in numeric_metrics):
             return jsonify({'error': f'以下列不是数值类型，无法计算统计指标: {numeric_check_failed}'}), 400      
     
     results = []     
+    # 处理数值型指标
     if 'mean' in metrics:         
-        results.extend(calculate_mean_diff(original_df, anonymized_df, columns_to_compare))     
+        results.extend(calculate_mean_diff(original_df, anonymized_df, numeric_columns_to_compare))     
     if 'median' in metrics:         
-        results.extend(calculate_median_diff(original_df, anonymized_df, columns_to_compare))     
+        results.extend(calculate_median_diff(original_df, anonymized_df, numeric_columns_to_compare))     
     if 'variance' in metrics:         
-        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))  
+        results.extend(calculate_variance_diff(original_df, anonymized_df, numeric_columns_to_compare))  
     if 'wasserstein' in metrics:
-        results.extend(calculate_wasserstein_distance(original_df, anonymized_df, columns_to_compare))
+        results.extend(calculate_wasserstein_distance(original_df, anonymized_df, numeric_columns_to_compare))
     if 'ks_similarity' in metrics:
-        results.extend(calculate_ks_similarity(original_df, anonymized_df, columns_to_compare))
+        results.extend(calculate_ks_similarity(original_df, anonymized_df, numeric_columns_to_compare))
     if 'pearson' in metrics:
-        results.extend(calculate_pearson(original_df, anonymized_df, columns_to_compare))
+        results.extend(calculate_pearson(original_df, anonymized_df, numeric_columns_to_compare))
     if 'spearman' in metrics:
-        results.extend(calculate_spearman(original_df, anonymized_df, columns_to_compare))
+        results.extend(calculate_spearman(original_df, anonymized_df, numeric_columns_to_compare))
+    
+    # 添加文本型指标处理
+    if 'js-divergence' in metrics:
+        results.extend(calculate_js_divergence(original_df, anonymized_df, columns_to_compare))
     
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
