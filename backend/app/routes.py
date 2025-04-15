@@ -20,6 +20,8 @@ from scipy.stats import wasserstein_distance
 from collections import Counter
 import uuid
 import io
+from datetime import datetime
+from scipy.stats import ks_2samp,  pearsonr, spearmanr
 
 
 bp = Blueprint('main', __name__)
@@ -147,15 +149,6 @@ def apply_generalization(dataframe, hierarchy_rules):
     print(generalized_df.head())
     return generalized_df
 
-
-
-# def check_m_diversity(group, sensitive_column, m_value):
-#     # 使用 Counter 计算敏感列中每个唯一值的出现次数
-#     sensitive_values = group[sensitive_column].values
-#     value_counts = Counter(sensitive_values)
-#     # 返回是否有至少 m 个不同的敏感属性值
-#     return len(value_counts) >= m_value
-
 def apply_km_anonymity_r(dataframe, quasi_identifiers, sensitive_column, k_value, m_value,hierarchy_rules,suppression_threshold):
     generalized_df = apply_generalization(dataframe, hierarchy_rules)
     print(generalized_df.head())
@@ -187,117 +180,6 @@ def apply_km_anonymity_r(dataframe, quasi_identifiers, sensitive_column, k_value
     
     return anonymized_df
 
-# def apply_km_anonymity_r(dataframe, quasi_identifiers, sensitive_column, k_value, m_value, hierarchy_rules):
-#     try:
-#         # 确保 quasi_identifiers 是一个列表并转换为字符串
-#         quasi_identifiers = [str(qi) for qi in quasi_identifiers] if isinstance(quasi_identifiers, (np.ndarray, list)) else [str(quasi_identifiers)]
-
-#         # 第一步：生成通用化后的数据
-#         generalized_df = apply_generalization(dataframe, hierarchy_rules)  # 应用前端传来的分层规则
-
-#         print(f"Generalized DataFrame before R processing (k={k_value}):")
-#         print(generalized_df.dtypes)  # 输出每列的数据类型，确保没有 numpy.ndarray
-#         print(generalized_df.head())
-#         sensitive_column=sensitive_column[0]
-#         print(sensitive_column)
-#         # 确保 quasi_identifiers 是字符串列表，而不是数组
-#         print(f"Quasi Identifiers: {quasi_identifiers}")
-
-#         # 转换为 R 的数据格式
-#         r_dataframe = pandas2ri.py2rpy(generalized_df)
-#         quasi_identifiers_r = robjects.StrVector(quasi_identifiers)
-
-#         # 使用 sdcMicro 进行 k-匿名处理
-#         sdc_obj = sdcmicro.createSdcObj(dat=r_dataframe, keyVars=quasi_identifiers_r)
-#         anonymized_sdc = sdcmicro.localSuppression(sdc_obj, k=k_value)
-
-#         # 提取匿名化后的数据
-#         anonymized_data = robjects.r['extractManipData'](anonymized_sdc)
-#         anonymized_df = pandas2ri.rpy2py(anonymized_data)
-
-#         print(f"Anonymized DataFrame from R (k={k_value}):")
-#         print(anonymized_df.head())
-
-#         # 第二步：检查 m-多样性
-#         # 根据 quasi_identifiers 进行分组，并检查每个组的敏感属性是否满足 m-多样性
-#         km_anonymized_groups = []
-#         for _, group in anonymized_df.groupby(quasi_identifiers):  # 确保 quasi_identifiers 是列表
-#             # 检查每个组是否满足 k-匿名性和 m-多样性
-#             if len(group) >= k_value and check_m_diversity(group, sensitive_column, m_value):
-#                 km_anonymized_groups.append(group)
-#             else:
-#                 # 如果不满足 m-多样性，可以进一步泛化或抑制处理
-#                 print(f"Group does not meet m-diversity (m={m_value}), additional suppression required.")
-
-#         # 将满足 km-匿名性和 m-多样性的组重新合并为最终结果
-#         if km_anonymized_groups:
-#             km_anonymized_df = pd.concat(km_anonymized_groups)
-#         else:
-#             km_anonymized_df = pd.DataFrame()  # 如果没有满足条件的组
-
-#         print(f"KM-Anonymized DataFrame (k={k_value}, m={m_value}):")
-#         print(km_anonymized_df.head())
-
-#         return km_anonymized_df
-
-#     except Exception as e:
-#         print(f"An error occurred: {e}")
-#         return None
-
-# def apply_k_anonymity_r(dataframe, quasi_identifiers, k_value, hierarchy_rules,suppression_threshold):
-#     try:
-#         # 第一步：使用前端提供的分层规则进行泛化
-#         generalized_df = apply_generalization(dataframe, hierarchy_rules)
-
-#         print(f"{generalized_df}R 处理前的泛化数据框 (k={k_value}):")
-#         print(generalized_df.head())
-
-#         # 记录原始数据中的 NaN 位置
-#         original_nan_mask = generalized_df[quasi_identifiers].isna()
-
-#         # 转换为 R 数据框格式
-#         r_dataframe = pandas2ri.py2rpy(generalized_df)
-#         quasi_identifiers_r = robjects.StrVector(quasi_identifiers)
-
-#         # 使用 sdcMicro 进行 k-匿名处理
-#         sdc_obj = sdcmicro.createSdcObj(dat=r_dataframe, keyVars=quasi_identifiers_r)
-#         anonymized_sdc = sdcmicro.localSuppression(sdc_obj, k=k_value)
-
-#         # 提取匿名化后的数据
-#         anonymized_data = robjects.r['extractManipData'](anonymized_sdc)
-#         anonymized_df = pandas2ri.rpy2py(anonymized_data)
-#         print(f"小等价类总行数: {len(anonymized_df)}, 删除总数: {int(len(anonymized_df) * suppression_threshold)} 数据{anonymized_df}")
-#         # 第二步：移除 quasi-identifiers 中含有 'Masked' 或空值的行
-#         mask = anonymized_df[quasi_identifiers].apply(lambda x: x.str.contains("Masked", na=False)) | anonymized_df[quasi_identifiers].isna()
-
-#         # 删除任何 quasi-identifier 为 'Masked' 或 NaN 的行
-#         anonymized_df = anonymized_df[~mask.any(axis=1)]
-
-# # 计算等价类的大小
-#         equivalence_class_size = anonymized_df.groupby(quasi_identifiers).size()
-#         small_classes = equivalence_class_size[equivalence_class_size < k_value].index
-
-#         # 获取所有小等价类的行索引
-#         small_class_rows = anonymized_df[anonymized_df[quasi_identifiers].apply(tuple, axis=1).isin(small_classes)]
-        
-#         # 计算要删除的总行数
-#         num_to_delete = int(len(small_class_rows) * suppression_threshold)
-#         print(f"小等价类总行数: {len(small_class_rows)}, 删除总数: {num_to_delete}")
-
-#         # 随机选择要删除的行索引
-#         indices_to_drop = small_class_rows.sample(num_to_delete, random_state=42).index
-
-#         # 删除指定比例的行
-#         anonymized_df = anonymized_df.drop(indices_to_drop)
-
-#         print(f"经过 R 处理后 (k={k_value}) 的匿名数据框，移除了小于 k 的等价类中 {suppression_threshold*100}% 的行:")
-#         print(anonymized_df.head())
-#         return anonymized_df
-    
-#     except Exception as e:
-#         print(f"发生错误: {e}")
-#         return None
-    
 def apply_k_anonymity_r(dataframe, quasi_identifiers, k_value, hierarchy_rules, suppression_threshold):
     generalized_df = apply_generalization(dataframe, hierarchy_rules)
     print(generalized_df.head())
@@ -318,88 +200,6 @@ def apply_k_anonymity_r(dataframe, quasi_identifiers, k_value, hierarchy_rules, 
     
     return anonymized_df
 
-# def apply_t_closeness_r(dataframe, quasi_identifiers, sensitive_attribute, k_value, t_value, hierarchy_rules):
-#     try:
-#         # Step 1: Apply k-anonymity as the base for t-closeness
-#         generalized_df = apply_generalization(dataframe, hierarchy_rules)  # 应用分层规则
-        
-#         print(f"Generalized DataFrame before R processing (k={k_value}):")
-#         print(generalized_df.head())
-
-#         sensitive_attribute=sensitive_attribute[0]
-#         print(sensitive_attribute)
-#         # 记录原始数据中的 NaN 位置
-#         original_nan_mask = generalized_df[quasi_identifiers].isna()
-
-#         # Convert to R dataframe format
-#         r_dataframe = pandas2ri.py2rpy(generalized_df)
-#         quasi_identifiers_r = robjects.StrVector(quasi_identifiers)
-
-#         # Use sdcMicro for k-anonymity
-#         sdc_obj = sdcmicro.createSdcObj(dat=r_dataframe, keyVars=quasi_identifiers_r)
-#         anonymized_sdc = sdcmicro.localSuppression(sdc_obj, k=k_value)
-
-#         # Extract anonymized data
-#         anonymized_data = robjects.r['extractManipData'](anonymized_sdc)
-#         anonymized_df = pandas2ri.rpy2py(anonymized_data)
-
-#         # Step 2: Remove rows with 'Masked' or empty values in quasi-identifiers
-#         # 重新处理 mask，确保没有歧义
-#         mask = anonymized_df[quasi_identifiers].apply(lambda x: x.str.contains("Masked", na=False))
-#         mask = mask.any(axis=1) | anonymized_df[quasi_identifiers].isna().any(axis=1)
-#         print(f"Mask applied, masked rows count: {mask.sum()}")
-#         anonymized_df = anonymized_df[~mask]
-
-#         # Step 3: Implement t-closeness
-#         overall_distribution = calculate_distribution(dataframe, sensitive_attribute)
-
-#         equivalence_classes = anonymized_df.groupby(quasi_identifiers)
-#         for name, group in equivalence_classes:
-#             print(f"Processing equivalence class: {name}")
-#             print(f"Group details: {group.head()}")
-
-#             # 确保 sensitive_attribute 的布尔判断正确使用 .any()
-#             if group[sensitive_attribute].isna().any():
-#                 print(f"Equivalence class {name} has missing values for sensitive attribute. Skipping this class.")
-#                 continue
-
-#             # 等价类过小，跳过
-#             if len(group) < 2:
-#                 print(f"Equivalence class {name} is too small for t-closeness. Skipping this class.")
-#                 continue
-
-#             class_distribution = group[sensitive_attribute].value_counts(normalize=True)
-
-#             # 避免空分布的情况
-#             if class_distribution.empty:
-#                 print(f"Equivalence class {name} has an empty distribution. Masking sensitive attribute.")
-#                 anonymized_df.loc[group.index, sensitive_attribute] = 'Masked'
-#                 continue
-
-#             # 计算 Wasserstein 距离，确保 distribution 是 numpy 数组
-#             distance = wasserstein_distance(
-#                 overall_distribution.values, 
-#                 class_distribution.values
-#             )
-#             print(f"t-closeness distance for class {name}: {distance}")
-
-#             # 如果距离超过 t 值，进行掩码处理
-#             if distance > t_value:
-#                 print(f"Equivalence class {name} exceeds t-closeness threshold (t={t_value}), masking sensitive attribute.")
-#                 anonymized_df.loc[group.index, sensitive_attribute] = 'Masked'
-
-#         # Step 4: Remove rows with 'Masked' values in sensitive attribute after t-closeness processing
-#         anonymized_df = anonymized_df[anonymized_df[sensitive_attribute] != 'Masked']
-
-#         print(f"Anonymized DataFrame after t-closeness processing (k={k_value}, t={t_value}):")
-#         print(anonymized_df.head())
-
-#         return anonymized_df
-
-#     except Exception as e:
-#         print(f"An error occurred during t-closeness processing: {e}")
-#         return None
-import pandas as pd
 
 def apply_t_closeness_r(dataframe, quasi_identifiers, sensitive_attribute, k_value, t_value, hierarchy_rules,suppression_threshold):
     try:
@@ -476,102 +276,6 @@ def calculate_kl_divergence(p, q):
     
     return entropy(p, q)
 
-# def apply_t_closeness_r(dataframe, quasi_identifiers, sensitive_attribute, k_value, t_value, hierarchy_rules, suppression_threshold):
-#     # Step 1: 数据泛化 - 调用泛化函数
-#     generalized_df = apply_generalization(dataframe, hierarchy_rules)
-#     print("泛化后的数据框:")
-#     print(generalized_df.head())
-
-#     # Step 2: 计算等价类大小，确保满足 k-anonymity
-#     equivalence_class_size = generalized_df.groupby(quasi_identifiers).size().reset_index(name='class_size')
-#     generalized_df = generalized_df.merge(equivalence_class_size, on=quasi_identifiers)
-
-#     # Step 3: 过滤小等价类，确保满足 k-anonymity
-#     anonymized_df = generalized_df[generalized_df['class_size'] >= k_value].drop(columns=['class_size'])
-
-#     # Step 4: 计算全局敏感属性的分布
-#     global_distribution = anonymized_df[sensitive_attribute].value_counts(normalize=True)
-
-#     # Step 1: 收集不满足 t-closeness 的记录索引
-#     non_compliant_indices = []  # 用于存储不满足 t-closeness 的记录索引
-
-#     for _, group in anonymized_df.groupby(quasi_identifiers):
-#         # 计算当前等价类中敏感属性的分布
-#         group_distribution = group[sensitive_attribute].value_counts(normalize=True)
-
-#         # 计算等价类分布与全局分布的差异
-#         distance = sum(abs(global_distribution.get(value, 0) - group_distribution.get(value, 0)) for value in global_distribution.index)
-        
-#         if distance > t_value:
-#             # 若不满足 t-closeness，将不满足的组的索引添加到集合中
-#             non_compliant_indices.extend(group.index)
-
-#     # Step 2: 根据 suppression_threshold 从不满足的记录中删除一定比例的记录
-#     if non_compliant_indices:
-#         num_to_delete_t = int(len(non_compliant_indices) * suppression_threshold)
-#         drop_indices_t = pd.Index(non_compliant_indices).to_series().sample(num_to_delete_t, random_state=42).index
-#         anonymized_df = anonymized_df.drop(drop_indices_t)
-
-#     print(f"应用 k-anonymity (k={k_value}) 和 t-closeness (t={t_value}) 后的匿名数据框:")
-#     print(anonymized_df.head())
-    
-#     return anonymized_df
-
-# def apply_l_diversity_r(dataframe, quasi_identifiers, sensitive_attribute, k_value, l_value, hierarchy_rules):
-#     try:
-#         # Step 1: 应用分层规则，生成通用化后的数据
-#         generalized_df = apply_generalization(dataframe, hierarchy_rules)
-
-#         print(f"Generalized DataFrame before R processing (k={k_value}, l={l_value}):")
-#         print(generalized_df.head())
-
-#         # 记录原始数据中的 NaN 位置
-#         original_nan_mask = generalized_df[quasi_identifiers].isna()
-
-#         # Step 2: 转换为 R 数据格式，进行 k-匿名处理
-#         r_dataframe = pandas2ri.py2rpy(generalized_df)
-#         quasi_identifiers_r = robjects.StrVector(quasi_identifiers)
-
-#         # 使用 sdcMicro 进行 k-anonymity
-#         sdc_obj = sdcmicro.createSdcObj(dat=r_dataframe, keyVars=quasi_identifiers_r)
-#         anonymized_sdc = sdcmicro.localSuppression(sdc_obj, k=k_value)
-
-#         # 提取匿名化后的数据
-#         anonymized_data = robjects.r['extractManipData'](anonymized_sdc)
-#         anonymized_df = pandas2ri.rpy2py(anonymized_data)
-
-#         # Step 3: 删除准标识符中包含 'Masked' 或 NaN 值的行
-#         mask = anonymized_df[quasi_identifiers].apply(lambda x: x.str.contains("Masked", na=False)) | anonymized_df[quasi_identifiers].isna()
-#         anonymized_df = anonymized_df[~mask.any(axis=1)]
-
-#         # Step 4: 删除不满足 k-匿名性的记录
-#         equivalence_class_size = anonymized_df.groupby(quasi_identifiers).size()
-
-#         # 找到小于 k 的等价类
-#         small_classes = equivalence_class_size[equivalence_class_size < k_value].index
-
-#         # 删除这些小等价类对应的行
-#         anonymized_df = anonymized_df[~anonymized_df[quasi_identifiers].apply(tuple, axis=1).isin(small_classes)]
-
-#         # Step 5: 检查 l-diversity 约束
-#         equivalence_classes = anonymized_df.groupby(quasi_identifiers)
-
-#         # 检查每个等价类的 l-diversity
-#         for name, group in equivalence_classes:
-#             sensitive_values = group[sensitive_attribute]
-#             print(f"{group}{sensitive_attribute}")
-#             # 如果敏感值的数量小于 l，则删除这些行
-#             if len(sensitive_values) < l_value:
-#                 anonymized_df = anonymized_df.drop(group.index)
-
-#         print(f"Anonymized DataFrame (k={k_value}, l={l_value}) after applying l-diversity:")
-#         print(anonymized_df.head())
-
-#         return anonymized_df
-
-#     except Exception as e:
-#         print(f"An error occurred: {e}")
-#         return None
 
 def apply_l_diversity_r(dataframe, quasi_identifiers, sensitive_attribute, k_value, l_value, hierarchy_rules, suppression_threshold):
     generalized_df = apply_generalization(dataframe, hierarchy_rules)
@@ -607,117 +311,6 @@ def apply_l_diversity_r(dataframe, quasi_identifiers, sensitive_attribute, k_val
     print(anonymized_df.head())
     
     return anonymized_df
-
-
-# def apply_differential_privacy(dataframe, epsilon, delta, quasi_identifiers, sensitive_columns, hierarchy_rules, budget, suppression_threshold):
-#     try:
-#         # 创建一个新的 DataFrame 用于存储差分隐私处理后的数据
-#         anonymized_df = dataframe.copy()
-        
-#         # 使用传入的预算
-#         privacy_budget = budget / len(quasi_identifiers)  # 按 quasi_identifiers 平分预算
-
-#         for qi in quasi_identifiers:
-#             if qi in dataframe.columns:
-#                 # 检查数据类型
-#                 rule = hierarchy_rules.get(qi, None)
-
-#                 if rule and rule.get('method') == 'dates':
-#                     days_since_epoch = (pd.to_datetime(dataframe[qi], errors='coerce') - pd.Timestamp("1970-01-01")) // pd.Timedelta('1D')
-                    
-#                     # 添加噪声，使用 epsilon 和预算
-#                     noise = np.random.laplace(0, 1/(epsilon * privacy_budget), size=days_since_epoch.shape)
-#                     noisy_days = days_since_epoch + noise
-                    
-#                     # 将时间戳转换回日期格式
-#                     anonymized_df[qi] = pd.to_datetime(noisy_days, origin='1970-01-01', unit='D').dt.date
-#                     anonymized_df[qi] = anonymized_df[qi].astype(str)
-                    
-#                     # 层次分组的处理
-#                     layers = rule.get('layers', [])
-#                     for layer in layers:
-#                         min_date = pd.to_datetime(layer['min'])
-#                         max_date = pd.to_datetime(layer['max'])
-#                         label = f"{min_date.strftime('%Y-%m-%d')} - {max_date.strftime('%Y-%m-%d')}"
-#                         # 确保 min_date 和 max_date 没有时区
-#                         min_date = min_date.tz_localize(None)
-#                         max_date = max_date.tz_localize(None)
-
-#                         # 对每个值进行分组，确保日期值不超出层次分组的范围
-#                         anonymized_df[qi] = anonymized_df[qi].apply(
-#                             lambda x: label if pd.notna(pd.to_datetime(x, errors='coerce').tz_localize(None)) 
-#                                     and min_date <= pd.to_datetime(x, errors='coerce').tz_localize(None) <= max_date else x
-#                         )
-#                 elif rule and rule.get('method') == 'ordering' and np.issubdtype(dataframe[qi].dtype, np.number):
-#                     # 对数值型数据应用差分隐私
-#                     column_data = pd.to_numeric(dataframe[qi], errors='coerce')
-#                     column_data = column_data.dropna()  # 删除空值
-                    
-#                     layers = rule.get('layers', [])
-#                     for layer in layers:
-#                         try:
-#                             min_val = float(layer['min'])
-#                             max_val = float(layer['max'])
-#                         except ValueError as ve:
-#                             print(f"Error converting min or max to float in layer: {layer}")
-#                             return None
-                        
-#                         label = f"{min_val}-{max_val}"
-                        
-#                         def try_float(x):
-#                             try:
-#                                 return float(x)
-#                             except (ValueError, TypeError):  # 捕获类型错误和转换错误
-#                                 return None  # 如果无法转换，返回 None
-
-#                         anonymized_df[qi] = anonymized_df[qi].apply(lambda x: label if try_float(x) is not None and min_val <= try_float(x) <= max_val else x)
-#                         # anonymized_df[qi] = anonymized_df[qi].apply(lambda x: label if min_val <= x <= max_val else x)
-
-#                     if anonymized_df[qi].isna().sum() > 0:
-#                         print(f"Warning: {qi} column contains NaN values after conversion.")
-
-#                 elif rule and rule.get('method') == 'category':
-#                     # 对类别数据应用分层规则
-#                     unique_categories = dataframe[qi].unique()
-
-#                         # 创建类别映射，映射到不同的类型
-#                     category_mapping = {val: f"{val}" for i, val in enumerate(unique_categories)}
-                    
-#                     # 只映射到原始的类别，不生成新的类别
-#                     anonymized_df[qi] = dataframe[qi].map(category_mapping).fillna('Unknown')
-#                 elif rule and rule.get('method') == 'masking':
-#                     masking_string = rule.get('maskingString', '***')
-#                     num_stars = masking_string.count('*')
-#                     non_masked_part = masking_string.replace('*', '')
-
-#                     def mask_value(value):
-#                         value_str = str(value)
-#                         if len(value_str) <= len(non_masked_part):
-#                             return '*' * len(value_str)
-#                         return value_str[:len(non_masked_part)] + '*' * num_stars
-                    
-#                     anonymized_df[qi] = dataframe[qi].apply(mask_value)
-
-#                 else:
-#                     print(f"Column '{qi}' does not match any known rule. Skipping this column.")
-        
-#         print(f"Warning: {sensitive_columns}")
-
-#         # Suppression logic (if necessary)
-#         print(len(anonymized_df),'111111')
-#         anonymized_df = anonymized_df.applymap(lambda x: None if np.random.rand() < suppression_threshold else x)
-#         # anonymized_df.dropna(inplace=True)
-
-#         print(f"Differentially Private DataFrame (epsilon={epsilon}, delta={delta}):")
-#         print(anonymized_df.head())
-
-#         return anonymized_df
-
-#     except Exception as e:
-#         import traceback
-#         print("Full traceback of the error:")
-#         traceback.print_exc()
-#         raise
 
 
 def apply_delta_presence(dataframe, quasi_identifiers, sensitive_column, delta_min, delta_max, hierarchy_rules, suppression_threshold):
@@ -1184,6 +777,195 @@ def calculate_variance_diff(original_df, anonymized_df, columns_to_compare):
             result.append({'column': col, 'metric': 'variance', 'error': str(e)})
     return result
 
+# wasserstein
+def calculate_wasserstein_distance(original_df, anonymized_df, columns_to_compare):
+    """
+    计算原始数据与匿名化数据在指定列上的 Wasserstein 距离（用于数值型字段）
+
+    参数：
+    - original_df: 原始 DataFrame
+    - anonymized_df: 匿名化后的 DataFrame
+    - columns_to_compare: 要比较的列名列表
+
+    返回：
+    - 距离结果列表，每列对应一个 dict（结构与 mean/variance 相同）
+    """
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce').dropna()
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce').dropna()
+
+            if len(orig_col) < 2 or len(anon_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'wasserstein',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            distance = wasserstein_distance(orig_col, anon_col)
+            results.append({
+                'column': col,
+                'metric': 'wasserstein',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(distance, 4)
+            })
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'wasserstein',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
+# KS-similarity
+def calculate_ks_similarity(original_df, anonymized_df, columns_to_compare):
+    """
+    计算原始数据与匿名化数据在指定列上的 Kolmogorov-Smirnov (KS) 相似度
+    原理：1 - KS statistic，即越接近 1 相似度越高
+
+    返回结构与其他指标一致
+    """
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce').dropna()
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce').dropna()
+
+            if len(orig_col) < 2 or len(anon_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'ks_similarity',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            stat, _ = ks_2samp(orig_col, anon_col)
+            similarity = 1 - stat
+            results.append({
+                'column': col,
+                'metric': 'ks_similarity',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(similarity, 4)
+            })
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'ks_similarity',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+# pearson
+def calculate_pearson(original_df, anonymized_df, columns_to_compare):
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce')
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce')
+
+            # 筛掉缺失值
+            valid_index = orig_col.notna() & anon_col.notna()
+            orig_col = orig_col[valid_index]
+            anon_col = anon_col[valid_index]
+
+            if len(orig_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'pearson',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            pearson_corr, _ = pearsonr(orig_col, anon_col)
+            results.append({
+                'column': col,
+                'metric': 'pearson',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(pearson_corr, 4)
+            })
+
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'pearson',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
+# spearman
+def calculate_spearman(original_df, anonymized_df, columns_to_compare):
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce')
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce')
+
+            valid_index = orig_col.notna() & anon_col.notna()
+            orig_col = orig_col[valid_index]
+            anon_col = anon_col[valid_index]
+
+            if len(orig_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'spearman',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            spearman_corr, _ = spearmanr(orig_col, anon_col)
+            results.append({
+                'column': col,
+                'metric': 'spearman',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(spearman_corr, 4)
+            })
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'spearman',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
+
+
 # 区间值预处理
 def parse_range(value):
     """处理各种不同格式的区间值，返回中点值"""
@@ -1218,9 +1000,56 @@ def parse_range(value):
     except:
         return np.nan
 
+# 新增：用于将原始日期或匿名化日期区间转为距今天数
+def convert_date_to_days(column, is_range=False):
+    """
+    将日期列转换为距今的天数：
+    - 若 is_range=True，则处理为区间（如 '2009-01-01 - 2024-07-01'），取中点计算距今天数
+    - 若 is_range=False，则为普通单个日期字段
+    """
+    today = datetime.today()
+
+    if is_range:
+        def parse_date_range(date_str):
+            try:
+                if pd.isna(date_str):
+                    return None
+                start_str, end_str = date_str.split(' - ')
+                start = pd.to_datetime(start_str.strip(), errors='coerce')
+                end = pd.to_datetime(end_str.strip(), errors='coerce')
+                if pd.isna(start) or pd.isna(end):
+                    return None
+                midpoint = start + (end - start) / 2
+                return (today - midpoint).days
+            except Exception as e:
+                print(f"日期区间解析失败: {date_str}，错误: {e}")
+                return None
+
+        return column.apply(parse_date_range)
+
+    else:
+        column = pd.to_datetime(column, errors='coerce')
+        return (today - column).dt.days
+   
+
 # 对列进行预处理
 def preprocess_column(column):
+    """
+    自动识别并处理列数据：
+    - 日期或日期区间：调用 convert_date_to_days
+    - 数值区间或普通数字：调用 parse_range
+    """
+    sample_value = column.dropna().astype(str).iloc[0] if not column.dropna().empty else ''
+
+    # 简单规则判断是否为日期或日期区间（包含年信息 + 分隔符）
+    if any(ch in sample_value for ch in ['-', '/']) and any(kw in sample_value for kw in ['20', '19']):
+        is_range = ' - ' in sample_value
+        return convert_date_to_days(column, is_range=is_range)
+
+    # 其余默认按数值区间处理
     return column.apply(parse_range)
+
+
 
 @bp.route('/evaluation', methods=['POST']) 
 def data_quality_evaluation():     
@@ -1253,30 +1082,31 @@ def data_quality_evaluation():
         return jsonify({'error': f'以下列在文件中不存在: {missing_cols}'}), 400
     
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
-    if any(metric in metrics for metric in ['mean', 'median', 'variance']):
+    if any(metric in metrics for metric in ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']):
         # 收集非数值类型的列
         non_numeric_cols = [
             col for col in columns_to_compare
             if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
         ]
         
-        # 对非数值类型的列尝试区间处理
+        # 对非数值类型的列尝试预处理
         for col in non_numeric_cols:
             try:
-                # 直接预处理区间型数据，不做额外检测
-                # 因为即使不是区间格式，parse_range也会尝试转为数值
-                original_df[col] = preprocess_column(original_df[col])
-                anonymized_df[col] = preprocess_column(anonymized_df[col])
-                
-                # 确保转换后是数值类型，处理为float类型
-                original_df[col] = pd.to_numeric(original_df[col], errors='coerce')
-                anonymized_df[col] = pd.to_numeric(anonymized_df[col], errors='coerce')
-                
-                # 将列显式转换为float类型
-                original_df[col] = original_df[col].astype(float)
-                anonymized_df[col] = anonymized_df[col].astype(float)
+                # 预处理并生成新列
+                processed_col_name = col + '_processed'
+                original_df[processed_col_name] = preprocess_column(original_df[col])
+                anonymized_df[processed_col_name] = preprocess_column(anonymized_df[col])
+
+                # 强制转换为 float 确保后续处理无误
+                original_df[processed_col_name] = pd.to_numeric(original_df[processed_col_name], errors='coerce').astype(float)
+                anonymized_df[processed_col_name] = pd.to_numeric(anonymized_df[processed_col_name], errors='coerce').astype(float)
+
+                # 更新列名用于后续比较
+                columns_to_compare = [processed_col_name if c == col else c for c in columns_to_compare]
+
             except Exception as e:
                 return jsonify({'error': f'数据预处理失败: {col}, 错误: {str(e)}'}), 400
+
         
         # 再次验证是否有非数值类型的列
         numeric_check_failed = [
@@ -1293,7 +1123,15 @@ def data_quality_evaluation():
     if 'median' in metrics:         
         results.extend(calculate_median_diff(original_df, anonymized_df, columns_to_compare))     
     if 'variance' in metrics:         
-        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))      
+        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))  
+    if 'wasserstein' in metrics:
+        results.extend(calculate_wasserstein_distance(original_df, anonymized_df, columns_to_compare))
+    if 'ks_similarity' in metrics:
+        results.extend(calculate_ks_similarity(original_df, anonymized_df, columns_to_compare))
+    if 'pearson' in metrics:
+        results.extend(calculate_pearson(original_df, anonymized_df, columns_to_compare))
+    if 'spearman' in metrics:
+        results.extend(calculate_spearman(original_df, anonymized_df, columns_to_compare))
     
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
