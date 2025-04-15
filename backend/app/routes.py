@@ -24,6 +24,9 @@ from datetime import datetime
 from scipy.stats import ks_2samp,  pearsonr, spearmanr
 from scipy.spatial.distance import jensenshannon
 from collections import Counter
+from sklearn.metrics import mutual_info_score
+from math import log2
+
 
 
 bp = Blueprint('main', __name__)
@@ -1000,15 +1003,11 @@ def calculate_js_divergence(original_df, anonymized_df, columns_to_compare):
             # 计算 Jensen-Shannon Divergence
             jsd = jensenshannon(orig_dist, anon_dist) ** 2
 
-            # 返回 top 5 的原始和匿名化分布（可视化用途）
-            top_orig = dict(sorted(orig_counts.items(), key=lambda x: -x[1])[:5])
-            top_anon = dict(sorted(anon_counts.items(), key=lambda x: -x[1])[:5])
-
             results.append({
                 'column': col,
                 'metric': 'js-divergence',
-                'original': top_orig,
-                'anonymized': top_anon,
+                'original': None,
+                'anonymized': None,
                 'difference': round(jsd, 6)
             })
 
@@ -1023,6 +1022,65 @@ def calculate_js_divergence(original_df, anonymized_df, columns_to_compare):
             })
 
     return results
+
+# 针对文本信息：mutual_information
+def calculate_mutual_information(original_df, anonymized_df, columns_to_compare):
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_series = original_df[col].dropna().astype(str)
+            anon_series = anonymized_df[col].dropna().astype(str)
+
+            # 对齐索引（仅对同一位置数据计算）
+            min_len = min(len(orig_series), len(anon_series))
+            orig_series = orig_series.iloc[:min_len]
+            anon_series = anon_series.iloc[:min_len]
+
+            joint_counter = Counter(zip(orig_series, anon_series))
+            total = sum(joint_counter.values())
+
+            if total == 0:
+                results.append({
+                    'column': col,
+                    'metric': 'mutual-information',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '无共同数据，无法计算'
+                })
+                continue
+
+            px = Counter(orig_series)
+            py = Counter(anon_series)
+
+            mi = 0.0
+            for (x, y), pxy in joint_counter.items():
+                p_x = px[x]
+                p_y = py[y]
+                mi += (pxy / total) * log2((pxy * total) / (p_x * p_y))
+
+            results.append({
+                'column': col,
+                'metric': 'mutual-information',
+                'original': None,
+                'anonymized': None,
+                'difference': round(mi, 6)
+            })
+
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'mutual-information',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
+
 
 
 
@@ -1144,7 +1202,7 @@ def data_quality_evaluation():
     
     # 区分数值型统计方法和文本型统计方法
     numeric_metrics = ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']
-    text_metrics = ['js-divergence']
+    text_metrics = ['js-divergence', 'mutual-information']
     
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
     numeric_columns_to_compare = columns_to_compare.copy()
@@ -1204,6 +1262,9 @@ def data_quality_evaluation():
     # 添加文本型指标处理
     if 'js-divergence' in metrics:
         results.extend(calculate_js_divergence(original_df, anonymized_df, columns_to_compare))
+
+    if 'mutual-information' in metrics:
+        results.extend(calculate_mutual_information(original_df, anonymized_df, columns_to_compare))
     
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
