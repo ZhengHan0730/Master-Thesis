@@ -29,7 +29,7 @@ const { Title } = Typography;
 const { Content } = Layout;
 
 const numericMethods = ["mean", "median", "variance", "wasserstein", "ks_similarity", "pearson", "spearman"];
-const textMethods = ["js-divergence"];
+const textMethods = ["js-divergence", "mutual-information"];
 
 const DataQualityEvaluation = () => {
   const [originalFile, setOriginalFile] = useState(null);
@@ -126,6 +126,41 @@ const DataQualityEvaluation = () => {
 
   const isTextMethod = selectedStatisticalMethods.some((m) => textMethods.includes(m));
 
+  const tableColumns = isTextMethod
+    ? [
+        { title: "Column", dataIndex: "column", key: "column" },
+        { title: "Metric", dataIndex: "metric", key: "metric" },
+        { title: "Difference", dataIndex: "difference", key: "difference" },
+      ]
+    : [
+        { title: "Column", dataIndex: "column", key: "column" },
+        { title: "Metric", dataIndex: "metric", key: "metric" },
+        {
+          title: "Original",
+          dataIndex: "original",
+          key: "original",
+          render: (val) =>
+            typeof val === "object"
+              ? Object.entries(val)
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join("\n")
+              : val,
+        },
+        {
+          title: "Anonymized",
+          dataIndex: "anonymized",
+          key: "anonymized",
+          render: (val) =>
+            typeof val === "object"
+              ? Object.entries(val)
+                  .map(([k, v]) => `${k}: ${v}`)
+                  .join("\n")
+              : val,
+        },
+        { title: "Difference", dataIndex: "difference", key: "difference" },
+        { title: "Error", dataIndex: "error", key: "error" },
+      ];
+
   return (
     <Layout className="quality-layout">
       <AppHeader />
@@ -149,7 +184,7 @@ const DataQualityEvaluation = () => {
               <Checkbox.Group options={columnOptions} value={selectedColumns} onChange={setSelectedColumns} />
             </Form.Item>
 
-            <Form.Item label="Numeric Evaluation Methods">
+            <Form.Item label="Statistical methods-Numeric Evaluation Methods">
               <Checkbox.Group
                 options={numericMethods.map((m) => ({ label: m, value: m }))}
                 value={selectedStatisticalMethods}
@@ -157,7 +192,7 @@ const DataQualityEvaluation = () => {
               />
             </Form.Item>
 
-            <Form.Item label="Text Evaluation Methods">
+            <Form.Item label="Statistical methods-Text Evaluation Methods">
               <Checkbox.Group
                 options={textMethods.map((m) => ({ label: m, value: m }))}
                 value={selectedStatisticalMethods}
@@ -182,39 +217,7 @@ const DataQualityEvaluation = () => {
                 Download CSV
               </Button>
 
-              <Table
-                dataSource={resultData.map((item, index) => ({ key: index, ...item }))}
-                pagination={false}
-                bordered
-                columns={[
-                  { title: "Column", dataIndex: "column", key: "column" },
-                  { title: "Metric", dataIndex: "metric", key: "metric" },
-                  {
-                    title: "Original",
-                    dataIndex: "original",
-                    key: "original",
-                    render: (val) =>
-                      typeof val === "object"
-                        ? Object.entries(val)
-                            .map(([k, v]) => `${k}: ${v}`)
-                            .join("\n")
-                        : val,
-                  },
-                  {
-                    title: "Anonymized",
-                    dataIndex: "anonymized",
-                    key: "anonymized",
-                    render: (val) =>
-                      typeof val === "object"
-                        ? Object.entries(val)
-                            .map(([k, v]) => `${k}: ${v}`)
-                            .join("\n")
-                        : val,
-                  },
-                  { title: "Difference", dataIndex: "difference", key: "difference" },
-                  { title: "Error", dataIndex: "error", key: "error" },
-                ]}
-              />
+              <Table dataSource={resultData.map((item, index) => ({ key: index, ...item }))} pagination={false} bordered columns={tableColumns} />
 
               {!isTextMethod && (
                 <BarChart
