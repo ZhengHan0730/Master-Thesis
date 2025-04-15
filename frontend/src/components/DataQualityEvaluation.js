@@ -18,7 +18,7 @@ import "./DataQualityEvaluation.css";
 const { Title } = Typography;
 const { Content } = Layout;
 
-const statisticalMethods = ["mean", "median", "variance"];
+const statisticalMethods = ["mean", "median", "variance", "wasserstein", 'ks_similarity', 'pearson', 'spearman'];
 
 const DataQualityEvaluation = () => {
   const [originalFile, setOriginalFile] = useState(null);

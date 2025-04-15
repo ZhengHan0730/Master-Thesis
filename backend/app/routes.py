@@ -20,6 +20,8 @@ from scipy.stats import wasserstein_distance
 from collections import Counter
 import uuid
 import io
+from datetime import datetime
+from scipy.stats import ks_2samp,  pearsonr, spearmanr
 
 
 bp = Blueprint('main', __name__)
@@ -775,6 +777,195 @@ def calculate_variance_diff(original_df, anonymized_df, columns_to_compare):
             result.append({'column': col, 'metric': 'variance', 'error': str(e)})
     return result
 
+# wasserstein
+def calculate_wasserstein_distance(original_df, anonymized_df, columns_to_compare):
+    """
+    计算原始数据与匿名化数据在指定列上的 Wasserstein 距离（用于数值型字段）
+
+    参数：
+    - original_df: 原始 DataFrame
+    - anonymized_df: 匿名化后的 DataFrame
+    - columns_to_compare: 要比较的列名列表
+
+    返回：
+    - 距离结果列表，每列对应一个 dict（结构与 mean/variance 相同）
+    """
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce').dropna()
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce').dropna()
+
+            if len(orig_col) < 2 or len(anon_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'wasserstein',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            distance = wasserstein_distance(orig_col, anon_col)
+            results.append({
+                'column': col,
+                'metric': 'wasserstein',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(distance, 4)
+            })
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'wasserstein',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
+# KS-similarity
+def calculate_ks_similarity(original_df, anonymized_df, columns_to_compare):
+    """
+    计算原始数据与匿名化数据在指定列上的 Kolmogorov-Smirnov (KS) 相似度
+    原理：1 - KS statistic，即越接近 1 相似度越高
+
+    返回结构与其他指标一致
+    """
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce').dropna()
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce').dropna()
+
+            if len(orig_col) < 2 or len(anon_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'ks_similarity',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            stat, _ = ks_2samp(orig_col, anon_col)
+            similarity = 1 - stat
+            results.append({
+                'column': col,
+                'metric': 'ks_similarity',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(similarity, 4)
+            })
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'ks_similarity',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+# pearson
+def calculate_pearson(original_df, anonymized_df, columns_to_compare):
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce')
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce')
+
+            # 筛掉缺失值
+            valid_index = orig_col.notna() & anon_col.notna()
+            orig_col = orig_col[valid_index]
+            anon_col = anon_col[valid_index]
+
+            if len(orig_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'pearson',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            pearson_corr, _ = pearsonr(orig_col, anon_col)
+            results.append({
+                'column': col,
+                'metric': 'pearson',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(pearson_corr, 4)
+            })
+
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'pearson',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
+# spearman
+def calculate_spearman(original_df, anonymized_df, columns_to_compare):
+    results = []
+
+    for col in columns_to_compare:
+        try:
+            orig_col = pd.to_numeric(original_df[col], errors='coerce')
+            anon_col = pd.to_numeric(anonymized_df[col], errors='coerce')
+
+            valid_index = orig_col.notna() & anon_col.notna()
+            orig_col = orig_col[valid_index]
+            anon_col = anon_col[valid_index]
+
+            if len(orig_col) < 2:
+                results.append({
+                    'column': col,
+                    'metric': 'spearman',
+                    'original': None,
+                    'anonymized': None,
+                    'difference': None,
+                    'error': '数据样本量不足'
+                })
+                continue
+
+            spearman_corr, _ = spearmanr(orig_col, anon_col)
+            results.append({
+                'column': col,
+                'metric': 'spearman',
+                'original': round(orig_col.mean(), 4),
+                'anonymized': round(anon_col.mean(), 4),
+                'difference': round(spearman_corr, 4)
+            })
+        except Exception as e:
+            results.append({
+                'column': col,
+                'metric': 'spearman',
+                'original': None,
+                'anonymized': None,
+                'difference': None,
+                'error': str(e)
+            })
+
+    return results
+
+
+
 # 区间值预处理
 def parse_range(value):
     """处理各种不同格式的区间值，返回中点值"""
@@ -809,9 +1000,56 @@ def parse_range(value):
     except:
         return np.nan
 
+# 新增：用于将原始日期或匿名化日期区间转为距今天数
+def convert_date_to_days(column, is_range=False):
+    """
+    将日期列转换为距今的天数：
+    - 若 is_range=True，则处理为区间（如 '2009-01-01 - 2024-07-01'），取中点计算距今天数
+    - 若 is_range=False，则为普通单个日期字段
+    """
+    today = datetime.today()
+
+    if is_range:
+        def parse_date_range(date_str):
+            try:
+                if pd.isna(date_str):
+                    return None
+                start_str, end_str = date_str.split(' - ')
+                start = pd.to_datetime(start_str.strip(), errors='coerce')
+                end = pd.to_datetime(end_str.strip(), errors='coerce')
+                if pd.isna(start) or pd.isna(end):
+                    return None
+                midpoint = start + (end - start) / 2
+                return (today - midpoint).days
+            except Exception as e:
+                print(f"日期区间解析失败: {date_str}，错误: {e}")
+                return None
+
+        return column.apply(parse_date_range)
+
+    else:
+        column = pd.to_datetime(column, errors='coerce')
+        return (today - column).dt.days
+   
+
 # 对列进行预处理
 def preprocess_column(column):
+    """
+    自动识别并处理列数据：
+    - 日期或日期区间：调用 convert_date_to_days
+    - 数值区间或普通数字：调用 parse_range
+    """
+    sample_value = column.dropna().astype(str).iloc[0] if not column.dropna().empty else ''
+
+    # 简单规则判断是否为日期或日期区间（包含年信息 + 分隔符）
+    if any(ch in sample_value for ch in ['-', '/']) and any(kw in sample_value for kw in ['20', '19']):
+        is_range = ' - ' in sample_value
+        return convert_date_to_days(column, is_range=is_range)
+
+    # 其余默认按数值区间处理
     return column.apply(parse_range)
+
+
 
 @bp.route('/evaluation', methods=['POST']) 
 def data_quality_evaluation():     
@@ -844,30 +1082,31 @@ def data_quality_evaluation():
         return jsonify({'error': f'以下列在文件中不存在: {missing_cols}'}), 400
     
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
-    if any(metric in metrics for metric in ['mean', 'median', 'variance']):
+    if any(metric in metrics for metric in ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']):
         # 收集非数值类型的列
         non_numeric_cols = [
             col for col in columns_to_compare
             if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
         ]
         
-        # 对非数值类型的列尝试区间处理
+        # 对非数值类型的列尝试预处理
         for col in non_numeric_cols:
             try:
-                # 直接预处理区间型数据，不做额外检测
-                # 因为即使不是区间格式，parse_range也会尝试转为数值
-                original_df[col] = preprocess_column(original_df[col])
-                anonymized_df[col] = preprocess_column(anonymized_df[col])
-                
-                # 确保转换后是数值类型，处理为float类型
-                original_df[col] = pd.to_numeric(original_df[col], errors='coerce')
-                anonymized_df[col] = pd.to_numeric(anonymized_df[col], errors='coerce')
-                
-                # 将列显式转换为float类型
-                original_df[col] = original_df[col].astype(float)
-                anonymized_df[col] = anonymized_df[col].astype(float)
+                # 预处理并生成新列
+                processed_col_name = col + '_processed'
+                original_df[processed_col_name] = preprocess_column(original_df[col])
+                anonymized_df[processed_col_name] = preprocess_column(anonymized_df[col])
+
+                # 强制转换为 float 确保后续处理无误
+                original_df[processed_col_name] = pd.to_numeric(original_df[processed_col_name], errors='coerce').astype(float)
+                anonymized_df[processed_col_name] = pd.to_numeric(anonymized_df[processed_col_name], errors='coerce').astype(float)
+
+                # 更新列名用于后续比较
+                columns_to_compare = [processed_col_name if c == col else c for c in columns_to_compare]
+
             except Exception as e:
                 return jsonify({'error': f'数据预处理失败: {col}, 错误: {str(e)}'}), 400
+
         
         # 再次验证是否有非数值类型的列
         numeric_check_failed = [
@@ -884,7 +1123,15 @@ def data_quality_evaluation():
     if 'median' in metrics:         
         results.extend(calculate_median_diff(original_df, anonymized_df, columns_to_compare))     
     if 'variance' in metrics:         
-        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))      
+        results.extend(calculate_variance_diff(original_df, anonymized_df, columns_to_compare))  
+    if 'wasserstein' in metrics:
+        results.extend(calculate_wasserstein_distance(original_df, anonymized_df, columns_to_compare))
+    if 'ks_similarity' in metrics:
+        results.extend(calculate_ks_similarity(original_df, anonymized_df, columns_to_compare))
+    if 'pearson' in metrics:
+        results.extend(calculate_pearson(original_df, anonymized_df, columns_to_compare))
+    if 'spearman' in metrics:
+        results.extend(calculate_spearman(original_df, anonymized_df, columns_to_compare))
     
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
