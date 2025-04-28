@@ -33,7 +33,7 @@ const { TabPane } = Tabs;
 // 方法分类
 const numericMethods = ["mean", "median", "variance", "wasserstein", "ks_similarity", "pearson", "spearman"];
 const textMethods = ["js-divergence", "mutual-information"];
-const mlMethods = ["random-forest", "svm"]; // Added SVM to ml methods
+const mlMethods = ["random-forest", "svm", "mlp"];
 
 const DataQualityEvaluation = () => {
   const [originalFile, setOriginalFile] = useState(null);
@@ -159,6 +159,22 @@ const DataQualityEvaluation = () => {
   // Filter results for specific ML methods
   const getRFResults = () => resultData.filter((r) => r.metric === "random-forest");
   const getSVMResults = () => resultData.filter((r) => r.metric === "svm");
+  const getMLPResults = () => resultData.filter((r) => r.metric === "mlp");
+
+  // Get all ML methods that have been selected and have results
+  const getSelectedMLMethods = () => {
+    const methods = [];
+    if (selectedStatisticalMethods.includes("random-forest") && getRFResults().length > 0) methods.push("random-forest");
+    if (selectedStatisticalMethods.includes("svm") && getSVMResults().length > 0) methods.push("svm");
+    if (selectedStatisticalMethods.includes("mlp") && getMLPResults().length > 0) methods.push("mlp");
+    return methods;
+  };
+
+  // Determine if we should show the model comparison tab
+  const shouldShowComparison = () => {
+    const methods = getSelectedMLMethods();
+    return methods.length >= 2;
+  };
 
   return (
     <Layout className="quality-layout">
@@ -251,7 +267,7 @@ const DataQualityEvaluation = () => {
                   <Title level={4}>Machine Learning Model Evaluation</Title>
                   
                   <Tabs defaultActiveKey="1">
-                    {selectedStatisticalMethods.includes("random-forest") && (
+                    {selectedStatisticalMethods.includes("random-forest") && getRFResults().length > 0 && (
                       <TabPane tab="Random Forest" key="1">
                         <ResponsiveContainer width="100%" height={300}>
                           <BarChart
@@ -277,7 +293,7 @@ const DataQualityEvaluation = () => {
                       </TabPane>
                     )}
                     
-                    {selectedStatisticalMethods.includes("svm") && (
+                    {selectedStatisticalMethods.includes("svm") && getSVMResults().length > 0 && (
                       <TabPane tab="SVM" key="2">
                         <ResponsiveContainer width="100%" height={300}>
                           <BarChart
@@ -302,15 +318,41 @@ const DataQualityEvaluation = () => {
                         </ResponsiveContainer>
                       </TabPane>
                     )}
+
+                    {selectedStatisticalMethods.includes("mlp") && getMLPResults().length > 0 && (
+                      <TabPane tab="MLP" key="3">
+                        <ResponsiveContainer width="100%" height={300}>
+                          <BarChart
+                            data={getMLPResults()}
+                            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="dataset" />
+                            <YAxis />
+                            <Tooltip />
+                            <Legend />
+                            <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
+                              <LabelList dataKey="accuracy" position="top" />
+                            </Bar>
+                            <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
+                              <LabelList dataKey="f1_score" position="top" />
+                            </Bar>
+                            <Bar dataKey="precision" name="Precision" fill="#ffc658">
+                              <LabelList dataKey="precision" position="top" />
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </TabPane>
+                    )}
                     
-                    {selectedStatisticalMethods.includes("random-forest") && selectedStatisticalMethods.includes("svm") && (
-                      <TabPane tab="Model Comparison" key="3">
+                    {shouldShowComparison() && (
+                      <TabPane tab="Model Comparison" key="4">
                         <div style={{ display: "flex", justifyContent: "space-around" }}>
                           <div style={{ width: "45%" }}>
                             <Title level={5} style={{ textAlign: "center" }}>Original Data</Title>
                             <ResponsiveContainer width="100%" height={300}>
                               <BarChart
-                                data={resultData.filter(r => r.dataset === "Original")}
+                                data={resultData.filter(r => r.dataset === "Original" && mlMethods.includes(r.metric))}
                                 margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                               >
                                 <CartesianGrid strokeDasharray="3 3" />
@@ -335,7 +377,7 @@ const DataQualityEvaluation = () => {
                             <Title level={5} style={{ textAlign: "center" }}>Anonymized Data</Title>
                             <ResponsiveContainer width="100%" height={300}>
                               <BarChart
-                                data={resultData.filter(r => r.dataset === "Anonymized")}
+                                data={resultData.filter(r => r.dataset === "Anonymized" && mlMethods.includes(r.metric))}
                                 margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                               >
                                 <CartesianGrid strokeDasharray="3 3" />
