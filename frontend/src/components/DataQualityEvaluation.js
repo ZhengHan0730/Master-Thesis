@@ -28,8 +28,10 @@ import "./DataQualityEvaluation.css";
 const { Title } = Typography;
 const { Content } = Layout;
 
+// 方法分类
 const numericMethods = ["mean", "median", "variance", "wasserstein", "ks_similarity", "pearson", "spearman"];
 const textMethods = ["js-divergence", "mutual-information"];
+const mlMethods = ["random-forest"];
 
 const DataQualityEvaluation = () => {
   const [originalFile, setOriginalFile] = useState(null);
@@ -37,6 +39,7 @@ const DataQualityEvaluation = () => {
   const [columnOptions, setColumnOptions] = useState([]);
   const [selectedColumns, setSelectedColumns] = useState([]);
   const [selectedStatisticalMethods, setSelectedStatisticalMethods] = useState([]);
+  const [labelColumn, setLabelColumn] = useState(null);
   const [loading, setLoading] = useState(false);
   const [resultData, setResultData] = useState([]);
   const [resultId, setResultId] = useState(null);
@@ -74,12 +77,20 @@ const DataQualityEvaluation = () => {
       return;
     }
 
+    if (selectedStatisticalMethods.some((m) => mlMethods.includes(m)) && !labelColumn) {
+      message.error("请选择一个 Label 列用于机器学习评估！");
+      return;
+    }
+
     setLoading(true);
     const formData = new FormData();
     formData.append("original_file", originalFile);
     formData.append("anonymized_file", anonymizedFile);
     formData.append("columns", selectedColumns.join(","));
     formData.append("metrics", selectedStatisticalMethods.join(","));
+    if (labelColumn) {
+      formData.append("label", labelColumn);
+    }
 
     try {
       const response = await fetch("http://127.0.0.1:5000/api/evaluation", {
@@ -94,14 +105,7 @@ const DataQualityEvaluation = () => {
         return;
       }
 
-      let result;
-      try {
-        result = await response.json();
-      } catch (err) {
-        message.error("后端返回内容不是有效的 JSON");
-        return;
-      }
-
+      const result = await response.json();
       setResultData(result.summary || []);
       setResultId(result.result_id);
       message.success("数据质量评估成功！");
@@ -124,9 +128,17 @@ const DataQualityEvaluation = () => {
     document.body.removeChild(link);
   };
 
+  const isMLMethod = selectedStatisticalMethods.some((m) => mlMethods.includes(m));
   const isTextMethod = selectedStatisticalMethods.some((m) => textMethods.includes(m));
 
-  const tableColumns = isTextMethod
+  const tableColumns = isMLMethod
+    ? [
+        { title: "Dataset", dataIndex: "dataset", key: "dataset" },
+        { title: "Accuracy", dataIndex: "accuracy", key: "accuracy" },
+        { title: "F1 Score", dataIndex: "f1_score", key: "f1_score" },
+        { title: "Precision", dataIndex: "precision", key: "precision" },
+      ]
+    : isTextMethod
     ? [
         { title: "Column", dataIndex: "column", key: "column" },
         { title: "Metric", dataIndex: "metric", key: "metric" },
@@ -135,28 +147,8 @@ const DataQualityEvaluation = () => {
     : [
         { title: "Column", dataIndex: "column", key: "column" },
         { title: "Metric", dataIndex: "metric", key: "metric" },
-        {
-          title: "Original",
-          dataIndex: "original",
-          key: "original",
-          render: (val) =>
-            typeof val === "object"
-              ? Object.entries(val)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join("\n")
-              : val,
-        },
-        {
-          title: "Anonymized",
-          dataIndex: "anonymized",
-          key: "anonymized",
-          render: (val) =>
-            typeof val === "object"
-              ? Object.entries(val)
-                  .map(([k, v]) => `${k}: ${v}`)
-                  .join("\n")
-              : val,
-        },
+        { title: "Original", dataIndex: "original", key: "original" },
+        { title: "Anonymized", dataIndex: "anonymized", key: "anonymized" },
         { title: "Difference", dataIndex: "difference", key: "difference" },
         { title: "Error", dataIndex: "error", key: "error" },
       ];
@@ -184,7 +176,7 @@ const DataQualityEvaluation = () => {
               <Checkbox.Group options={columnOptions} value={selectedColumns} onChange={setSelectedColumns} />
             </Form.Item>
 
-            <Form.Item label="Statistical methods-Numeric Evaluation Methods">
+            <Form.Item label="Numeric Evaluation Methods">
               <Checkbox.Group
                 options={numericMethods.map((m) => ({ label: m, value: m }))}
                 value={selectedStatisticalMethods}
@@ -192,13 +184,32 @@ const DataQualityEvaluation = () => {
               />
             </Form.Item>
 
-            <Form.Item label="Statistical methods-Text Evaluation Methods">
+            <Form.Item label="Text Evaluation Methods">
               <Checkbox.Group
                 options={textMethods.map((m) => ({ label: m, value: m }))}
                 value={selectedStatisticalMethods}
                 onChange={setSelectedStatisticalMethods}
               />
             </Form.Item>
+
+            <Form.Item label="Machine Learning Evaluation Methods">
+              <Checkbox.Group
+                options={mlMethods.map((m) => ({ label: m, value: m }))}
+                value={selectedStatisticalMethods}
+                onChange={setSelectedStatisticalMethods}
+              />
+            </Form.Item>
+
+            {selectedStatisticalMethods.some((m) => mlMethods.includes(m)) && (
+              <Form.Item label="Select Label Column for Machine Learning">
+                <Checkbox.Group
+                  options={columnOptions}
+                  value={labelColumn ? [labelColumn] : []}
+                  onChange={(vals) => setLabelColumn(vals[0] || null)}
+                />
+              </Form.Item>
+            )}
+
 
             <Form.Item>
               <Button type="primary" onClick={handleEvaluate} loading={loading} block>
@@ -219,23 +230,35 @@ const DataQualityEvaluation = () => {
 
               <Table dataSource={resultData.map((item, index) => ({ key: index, ...item }))} pagination={false} bordered columns={tableColumns} />
 
-              {!isTextMethod && (
-                <BarChart
-                  width={700}
-                  height={300}
-                  data={resultData.filter((r) => !r.error)}
-                  style={{ marginTop: 40 }}
-                >
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="column" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="original" fill="#8884d8" name="Original">
-                    <LabelList dataKey="metric" position="top" />
-                  </Bar>
-                  <Bar dataKey="anonymized" fill="#82ca9d" name="Anonymized" />
-                </BarChart>
+              {/* random-forest图表 */}
+              {isMLMethod && (
+                <>
+                  <Title level={5} style={{ marginTop: 40 }}>
+                    Random Forest Evaluation Charts
+                  </Title>
+
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart
+                      data={resultData.filter((r) => r.dataset)}
+                      margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                    >
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="dataset" />
+                      <YAxis />
+                      <Tooltip />
+                      <Legend />
+                      <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
+                        <LabelList dataKey="accuracy" position="top" />
+                      </Bar>
+                      <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
+                        <LabelList dataKey="f1_score" position="top" />
+                      </Bar>
+                      <Bar dataKey="precision" name="Precision" fill="#ffc658">
+                        <LabelList dataKey="precision" position="top" />
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </>
               )}
             </>
           )}
