@@ -26,6 +26,9 @@ from scipy.spatial.distance import jensenshannon
 from collections import Counter
 from sklearn.metrics import mutual_info_score
 from math import log2
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, f1_score, precision_score
 
 
 
@@ -1080,7 +1083,74 @@ def calculate_mutual_information(original_df, anonymized_df, columns_to_compare)
 
     return results
 
+# random forest
+def evaluate_random_forest_quality(original_df, anonymized_df, feature_columns, label_column):
+    """
+    用 Random Forest 对比原始数据和匿名数据的预测性能变化。
 
+    输入：
+    - original_df: 原始DataFrame
+    - anonymized_df: 匿名化后的DataFrame
+    - feature_columns: 参与建模的特征列列表
+    - label_column: 目标列（标签）
+
+    输出：
+    - results: 列表，包含原始和匿名数据的Random Forest评估指标
+    """
+
+    results = []
+
+    if not label_column:
+        raise ValueError('必须提供 label 列用于 supervised learning')
+
+    if label_column not in original_df.columns or label_column not in anonymized_df.columns:
+        raise ValueError(f"目标列 {label_column} 不存在于数据中")
+
+    # 特征和标签
+    X_orig = original_df[feature_columns]
+    y_orig = original_df[label_column]
+    X_anon = anonymized_df[feature_columns]
+    y_anon = anonymized_df[label_column]
+
+    # one-hot编码
+    X_orig = pd.get_dummies(X_orig)
+    X_anon = pd.get_dummies(X_anon)
+
+    # 取交集特征列
+    common_cols = list(set(X_orig.columns) & set(X_anon.columns))
+    X_orig = X_orig[common_cols]
+    X_anon = X_anon[common_cols]
+
+    # 切分训练/测试集
+    X_train, X_test, y_train, y_test = train_test_split(X_orig, y_orig, test_size=0.3, random_state=42)
+    
+    clf = RandomForestClassifier(n_estimators=50, max_depth=10, random_state=42)
+    clf.fit(X_train, y_train)
+    y_pred_orig = clf.predict(X_test)
+
+    results.append({
+        'metric': 'random-forest',
+        'dataset': 'Original',
+        'accuracy': round(accuracy_score(y_test, y_pred_orig), 4),
+        'f1_score': round(f1_score(y_test, y_pred_orig, average='macro'), 4),
+        'precision': round(precision_score(y_test, y_pred_orig, average='macro'), 4)
+    })
+
+    # 匿名数据
+    X_train_an, X_test_an, y_train_an, y_test_an = train_test_split(X_anon, y_anon, test_size=0.3, random_state=42)
+    clf_an = RandomForestClassifier(n_estimators=50, max_depth=10, random_state=42)
+    clf_an.fit(X_train_an, y_train_an)
+    y_pred_an = clf_an.predict(X_test_an)
+
+    results.append({
+        'metric': 'random-forest',
+        'dataset': 'Anonymized',
+        'accuracy': round(accuracy_score(y_test_an, y_pred_an), 4),
+        'f1_score': round(f1_score(y_test_an, y_pred_an, average='macro'), 4),
+        'precision': round(precision_score(y_test_an, y_pred_an, average='macro'), 4)
+    })
+
+    return results
 
 
 
@@ -1177,7 +1247,8 @@ def data_quality_evaluation():
     
     original_file = request.files['original_file']     
     anonymized_file = request.files['anonymized_file']     
-    columns_to_compare = request.form.get('columns')     
+    columns_to_compare = request.form.get('columns')
+    label_column = request.form.get('label')      
     metrics = request.form.get('metrics', 'mean,median,variance').split(',')      
     
     if not columns_to_compare:         
@@ -1203,7 +1274,7 @@ def data_quality_evaluation():
     # 区分数值型统计方法和文本型统计方法
     numeric_metrics = ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']
     text_metrics = ['js-divergence', 'mutual-information']
-    
+    ml_metrics = ['random-forest']
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
     numeric_columns_to_compare = columns_to_compare.copy()
     
@@ -1258,13 +1329,28 @@ def data_quality_evaluation():
         results.extend(calculate_pearson(original_df, anonymized_df, numeric_columns_to_compare))
     if 'spearman' in metrics:
         results.extend(calculate_spearman(original_df, anonymized_df, numeric_columns_to_compare))
-    
-    # 添加文本型指标处理
-    if 'js-divergence' in metrics:
-        results.extend(calculate_js_divergence(original_df, anonymized_df, columns_to_compare))
 
-    if 'mutual-information' in metrics:
-        results.extend(calculate_mutual_information(original_df, anonymized_df, columns_to_compare))
+    
+        # --- 文本指标 ---
+    if any(m in text_metrics for m in metrics):
+        if 'js-divergence' in metrics:
+            results.extend(calculate_js_divergence(original_df, anonymized_df, columns_to_compare))
+        if 'mutual-information' in metrics:
+            results.extend(calculate_mutual_information(original_df, anonymized_df, columns_to_compare))
+
+        # --- 机器学习指标（ML类）---
+    if any(m in ml_metrics for m in metrics):
+        if 'random-forest' in metrics:
+            try:
+                results.extend(
+                    evaluate_random_forest_quality(
+                        original_df, anonymized_df,
+                        feature_columns=numeric_columns_to_compare,  # 注意如果有经过预处理
+                        label_column=label_column
+                    )
+                )
+            except Exception as e:
+                return jsonify({'error': f'random-forest 评估失败: {str(e)}'}), 400
     
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
