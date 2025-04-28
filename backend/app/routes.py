@@ -35,6 +35,10 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.neural_network import MLPClassifier
+from sklearn.neighbors import NearestNeighbors, LocalOutlierFactor
+from sklearn.cluster import KMeans
+from sklearn.metrics import silhouette_score
+from sklearn.decomposition import PCA
 import time
 
 
@@ -1537,6 +1541,116 @@ def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_colu
 
     return results
 
+
+# knn
+def evaluate_unsupervised_quality(original_df, anonymized_df, feature_columns, k_neighbors=5, n_clusters=5):
+    """
+    无监督学习方法综合评估：
+    - KMeans聚类 + Silhouette得分
+    - KNN邻居保持率
+    - LOF局部异常因子变化
+
+    参数：
+    - original_df: 原始数据 DataFrame
+    - anonymized_df: 匿名化后的 DataFrame
+    - feature_columns: 特征列
+    - k_neighbors: KNN邻居数（默认5）
+    - n_clusters: KMeans聚类簇数（默认5）
+
+    返回：
+    - results: 评估结果列表
+    """
+
+    results = []
+
+    # 只取特征列，进行独热编码 (One-Hot Encoding)
+    X_orig = pd.get_dummies(original_df[feature_columns].copy())
+    X_anon = pd.get_dummies(anonymized_df[feature_columns].copy())
+
+    # 取两边共有的列，避免匿名化时特征值变化导致问题
+    common_cols = list(set(X_orig.columns) & set(X_anon.columns))
+    if not common_cols:
+        raise ValueError("原始数据和匿名数据没有共同特征，无法比较！")
+
+    X_orig = X_orig[common_cols]
+    X_anon = X_anon[common_cols]
+
+    ###### 1. KMeans聚类 + Silhouette得分 ######
+    try:
+        kmeans_orig = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit(X_orig)
+        kmeans_anon = KMeans(n_clusters=n_clusters, random_state=42, n_init=10).fit(X_anon)
+
+        sil_orig = silhouette_score(X_orig, kmeans_orig.labels_)
+        sil_anon = silhouette_score(X_anon, kmeans_anon.labels_)
+
+        results.append({
+            'metric': 'kmeans_silhouette',
+            'original': round(sil_orig, 6),
+            'anonymized': round(sil_anon, 6),
+            'difference': round(abs(sil_orig - sil_anon), 6)
+        })
+    except Exception as e:
+        results.append({
+            'metric': 'kmeans_silhouette',
+            'error': str(e)
+        })
+
+    ###### 2. 邻居保持率 (Neighbor Preservation) ######
+    try:
+        knn_orig = NearestNeighbors(n_neighbors=k_neighbors).fit(X_orig)
+        _, indices_orig = knn_orig.kneighbors(X_orig)
+
+        knn_anon = NearestNeighbors(n_neighbors=k_neighbors).fit(X_anon)
+        _, indices_anon = knn_anon.kneighbors(X_anon)
+
+        preserve_count = 0
+        total_count = 0
+
+        for idx in range(min(len(indices_orig), len(indices_anon))):
+            neighbors_orig = set(indices_orig[idx][1:])  # 排除自己
+            neighbors_anon = set(indices_anon[idx][1:])
+            preserve_count += len(neighbors_orig & neighbors_anon)
+            total_count += len(neighbors_orig)
+
+        preservation_ratio = preserve_count / total_count if total_count else 0
+
+        results.append({
+            'metric': 'knn_neighbor_preservation',
+            'original': 1.0,
+            'anonymized': round(preservation_ratio, 6),
+            'difference': round(1.0 - preservation_ratio, 6)
+        })
+    except Exception as e:
+        results.append({
+            'metric': 'knn_neighbor_preservation',
+            'error': str(e)
+        })
+
+    ###### 3. LOF局部异常因子变化 ######
+    try:
+        lof_orig = LocalOutlierFactor(n_neighbors=k_neighbors)
+        lof_score_orig = lof_orig.fit_predict(X_orig)
+        mean_lof_orig = np.mean(-lof_score_orig)
+
+        lof_anon = LocalOutlierFactor(n_neighbors=k_neighbors)
+        lof_score_anon = lof_anon.fit_predict(X_anon)
+        mean_lof_anon = np.mean(-lof_score_anon)
+
+        results.append({
+            'metric': 'local_outlier_factor',
+            'original': round(mean_lof_orig, 6),
+            'anonymized': round(mean_lof_anon, 6),
+            'difference': round(abs(mean_lof_orig - mean_lof_anon), 6)
+        })
+    except Exception as e:
+        results.append({
+            'metric': 'local_outlier_factor',
+            'error': str(e)
+        })
+
+    return results
+
+
 # 区间值预处理
 def parse_range(value, default_value=0):
     """处理各种不同格式的区间值，返回中点值，避免返回NaN"""
@@ -1656,10 +1770,11 @@ def data_quality_evaluation():
     numeric_metrics = ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']
     text_metrics = ['js-divergence', 'mutual-information']
     ml_metrics = ['random-forest', 'svm', 'mlp']
+    unsupervised_metrics = ['unsupervised-quality']
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
     numeric_columns_to_compare = columns_to_compare.copy()
     
-    if any(metric in metrics for metric in numeric_metrics+ ml_metrics):
+    if any(metric in metrics for metric in numeric_metrics+ ml_metrics+ unsupervised_metrics):
         # 收集非数值类型的列
         non_numeric_cols = [
             col for col in columns_to_compare
@@ -1756,6 +1871,14 @@ def data_quality_evaluation():
                 )
             except Exception as e:
                 return jsonify({'error': f'MLP 评估失败: {str(e)}'}), 400
+            
+    # --- 无监督学习指标 ---
+    if any(m in unsupervised_metrics for m in metrics):
+        try:
+            results.extend(evaluate_unsupervised_quality(original_df, anonymized_df, feature_columns=numeric_columns_to_compare, k_neighbors=5, n_clusters=5))
+        except Exception as e:
+            return jsonify({'error': f'unsupervised-quality 评估失败: {str(e)}'}), 400
+
         
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
