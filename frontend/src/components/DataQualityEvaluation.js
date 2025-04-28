@@ -22,6 +22,11 @@ import {
   Legend,
   LabelList,
   ResponsiveContainer,
+  RadarChart,
+  Radar,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
 } from "recharts";
 import AppHeader from "./Header";
 import "./DataQualityEvaluation.css";
@@ -34,6 +39,7 @@ const { TabPane } = Tabs;
 const numericMethods = ["mean", "median", "variance", "wasserstein", "ks_similarity", "pearson", "spearman"];
 const textMethods = ["js-divergence", "mutual-information"];
 const mlMethods = ["random-forest", "svm", "mlp"];
+const unsupervisedMethods = ["unsupervised-quality"];
 
 const DataQualityEvaluation = () => {
   const [originalFile, setOriginalFile] = useState(null);
@@ -132,22 +138,33 @@ const DataQualityEvaluation = () => {
 
   const isMLMethod = selectedStatisticalMethods.some((m) => mlMethods.includes(m));
   const isTextMethod = selectedStatisticalMethods.some((m) => textMethods.includes(m));
+  const isUnsupervisedMethod = selectedStatisticalMethods.some((m) => unsupervisedMethods.includes(m));
 
-  const tableColumns = isMLMethod
-    ? [
+  const getTableColumns = () => {
+    if (isMLMethod) {
+      return [
         { title: "Metric", dataIndex: "metric", key: "metric" },
         { title: "Dataset", dataIndex: "dataset", key: "dataset" },
         { title: "Accuracy", dataIndex: "accuracy", key: "accuracy" },
         { title: "F1 Score", dataIndex: "f1_score", key: "f1_score" },
         { title: "Precision", dataIndex: "precision", key: "precision" },
-      ]
-    : isTextMethod
-    ? [
+      ];
+    } else if (isTextMethod) {
+      return [
         { title: "Column", dataIndex: "column", key: "column" },
         { title: "Metric", dataIndex: "metric", key: "metric" },
         { title: "Difference", dataIndex: "difference", key: "difference" },
-      ]
-    : [
+      ];
+    } else if (isUnsupervisedMethod) {
+      return [
+        { title: "Metric", dataIndex: "metric", key: "metric" },
+        { title: "Original", dataIndex: "original", key: "original" },
+        { title: "Anonymized", dataIndex: "anonymized", key: "anonymized" },
+        { title: "Difference", dataIndex: "difference", key: "difference" },
+        { title: "Error", dataIndex: "error", key: "error" },
+      ]; 
+    } else {
+      return [
         { title: "Column", dataIndex: "column", key: "column" },
         { title: "Metric", dataIndex: "metric", key: "metric" },
         { title: "Original", dataIndex: "original", key: "original" },
@@ -155,11 +172,18 @@ const DataQualityEvaluation = () => {
         { title: "Difference", dataIndex: "difference", key: "difference" },
         { title: "Error", dataIndex: "error", key: "error" },
       ];
+    }
+  };
 
   // Filter results for specific ML methods
   const getRFResults = () => resultData.filter((r) => r.metric === "random-forest");
   const getSVMResults = () => resultData.filter((r) => r.metric === "svm");
   const getMLPResults = () => resultData.filter((r) => r.metric === "mlp");
+  
+  // Get unsupervised methods results
+  const getUnsupervisedResults = () => resultData.filter((r) => 
+    ["kmeans_silhouette", "knn_neighbor_preservation", "local_outlier_factor"].includes(r.metric)
+  );
 
   // Get all ML methods that have been selected and have results
   const getSelectedMLMethods = () => {
@@ -174,6 +198,31 @@ const DataQualityEvaluation = () => {
   const shouldShowComparison = () => {
     const methods = getSelectedMLMethods();
     return methods.length >= 2;
+  };
+
+  // Prepare data for unsupervised radar chart
+  const prepareUnsupervisedRadarData = () => {
+    const unsupervisedResults = getUnsupervisedResults();
+    if (unsupervisedResults.length === 0) return [];
+    
+    // Format radar data with both original and anonymized values
+    return [
+      {
+        subject: "KMeans Silhouette",
+        original: unsupervisedResults.find(r => r.metric === "kmeans_silhouette")?.original || 0,
+        anonymized: unsupervisedResults.find(r => r.metric === "kmeans_silhouette")?.anonymized || 0,
+      },
+      {
+        subject: "KNN Preservation",
+        original: unsupervisedResults.find(r => r.metric === "knn_neighbor_preservation")?.original || 0,
+        anonymized: unsupervisedResults.find(r => r.metric === "knn_neighbor_preservation")?.anonymized || 0,
+      },
+      {
+        subject: "Local Outlier Factor",
+        original: unsupervisedResults.find(r => r.metric === "local_outlier_factor")?.original || 0,
+        anonymized: unsupervisedResults.find(r => r.metric === "local_outlier_factor")?.anonymized || 0,
+      }
+    ];
   };
 
   return (
@@ -232,6 +281,17 @@ const DataQualityEvaluation = () => {
               />
             </Form.Item>
 
+            <Form.Item label="Unsupervised Learning Evaluation Methods">
+              <Checkbox.Group
+                options={unsupervisedMethods.map((m) => ({ label: m, value: m }))}
+                value={selectedStatisticalMethods.filter(m => unsupervisedMethods.includes(m))}
+                onChange={(vals) => {
+                  const currentNonUnsupervised = selectedStatisticalMethods.filter(m => !unsupervisedMethods.includes(m));
+                  setSelectedStatisticalMethods([...vals, ...currentNonUnsupervised]);
+                }}
+              />
+            </Form.Item>
+
             {selectedStatisticalMethods.some((m) => mlMethods.includes(m)) && (
               <Form.Item label="Select Label Column for Machine Learning">
                 <Checkbox.Group
@@ -259,7 +319,12 @@ const DataQualityEvaluation = () => {
                 Download CSV
               </Button>
 
-              <Table dataSource={resultData.map((item, index) => ({ key: index, ...item }))} pagination={false} bordered columns={tableColumns} />
+              <Table 
+                dataSource={resultData.map((item, index) => ({ key: index, ...item }))} 
+                pagination={false} 
+                bordered 
+                columns={getTableColumns()} 
+              />
 
               {/* ML model evaluation charts */}
               {isMLMethod && (
@@ -401,6 +466,53 @@ const DataQualityEvaluation = () => {
                       </TabPane>
                     )}
                   </Tabs>
+                </div>
+              )}
+
+              {/* Unsupervised Learning Evaluation charts */}
+              {isUnsupervisedMethod && getUnsupervisedResults().length > 0 && (
+                <div style={{ marginTop: 40 }}>
+                  <Title level={4}>Unsupervised Learning Evaluation</Title>
+                  
+                  <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+                    <ResponsiveContainer width="80%" height={400}>
+                      <RadarChart 
+                        cx="50%" 
+                        cy="50%" 
+                        outerRadius="80%" 
+                        data={prepareUnsupervisedRadarData()}
+                      >
+                        <PolarGrid />
+                        <PolarAngleAxis dataKey="subject" />
+                        <PolarRadiusAxis angle={30} domain={[0, 1]} />
+                        <Radar
+                          name="Original Data"
+                          dataKey="original"
+                          stroke="#8884d8"
+                          fill="#8884d8"
+                          fillOpacity={0.6}
+                        />
+                        <Radar
+                          name="Anonymized Data"
+                          dataKey="anonymized"
+                          stroke="#82ca9d"
+                          fill="#82ca9d"
+                          fillOpacity={0.6}
+                        />
+                        <Legend />
+                        <Tooltip />
+                      </RadarChart>
+                    </ResponsiveContainer>
+                  </div>
+                  
+                  <div style={{ marginTop: 20 }}>
+                    <Title level={5}>Unsupervised Learning Metrics Explanation:</Title>
+                    <ul>
+                      <li><strong>KMeans Silhouette:</strong> Measures how well data points fit within their clusters. Higher values (closer to 1) indicate better-defined clusters.</li>
+                      <li><strong>KNN Neighbor Preservation:</strong> Measures how well the K-nearest neighbors are preserved after anonymization. Higher values indicate better preservation of local data relationships.</li>
+                      <li><strong>Local Outlier Factor:</strong> Assesses how outlier detection is affected by anonymization. Similar values between original and anonymized data indicate better preservation of anomaly patterns.</li>
+                    </ul>
+                  </div>
                 </div>
               )}
             </>
