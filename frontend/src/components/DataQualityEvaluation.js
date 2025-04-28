@@ -9,6 +9,7 @@ import {
   Card,
   Checkbox,
   Table,
+  Tabs,
 } from "antd";
 import { UploadOutlined, DownloadOutlined } from "@ant-design/icons";
 import {
@@ -27,11 +28,12 @@ import "./DataQualityEvaluation.css";
 
 const { Title } = Typography;
 const { Content } = Layout;
+const { TabPane } = Tabs;
 
 // 方法分类
 const numericMethods = ["mean", "median", "variance", "wasserstein", "ks_similarity", "pearson", "spearman"];
 const textMethods = ["js-divergence", "mutual-information"];
-const mlMethods = ["random-forest"];
+const mlMethods = ["random-forest", "svm"]; // Added SVM to ml methods
 
 const DataQualityEvaluation = () => {
   const [originalFile, setOriginalFile] = useState(null);
@@ -133,6 +135,7 @@ const DataQualityEvaluation = () => {
 
   const tableColumns = isMLMethod
     ? [
+        { title: "Metric", dataIndex: "metric", key: "metric" },
         { title: "Dataset", dataIndex: "dataset", key: "dataset" },
         { title: "Accuracy", dataIndex: "accuracy", key: "accuracy" },
         { title: "F1 Score", dataIndex: "f1_score", key: "f1_score" },
@@ -152,6 +155,10 @@ const DataQualityEvaluation = () => {
         { title: "Difference", dataIndex: "difference", key: "difference" },
         { title: "Error", dataIndex: "error", key: "error" },
       ];
+
+  // Filter results for specific ML methods
+  const getRFResults = () => resultData.filter((r) => r.metric === "random-forest");
+  const getSVMResults = () => resultData.filter((r) => r.metric === "svm");
 
   return (
     <Layout className="quality-layout">
@@ -179,24 +186,33 @@ const DataQualityEvaluation = () => {
             <Form.Item label="Numeric Evaluation Methods">
               <Checkbox.Group
                 options={numericMethods.map((m) => ({ label: m, value: m }))}
-                value={selectedStatisticalMethods}
-                onChange={setSelectedStatisticalMethods}
+                value={selectedStatisticalMethods.filter(m => numericMethods.includes(m))}
+                onChange={(vals) => {
+                  const currentNonNumeric = selectedStatisticalMethods.filter(m => !numericMethods.includes(m));
+                  setSelectedStatisticalMethods([...vals, ...currentNonNumeric]);
+                }}
               />
             </Form.Item>
 
             <Form.Item label="Text Evaluation Methods">
               <Checkbox.Group
                 options={textMethods.map((m) => ({ label: m, value: m }))}
-                value={selectedStatisticalMethods}
-                onChange={setSelectedStatisticalMethods}
+                value={selectedStatisticalMethods.filter(m => textMethods.includes(m))}
+                onChange={(vals) => {
+                  const currentNonText = selectedStatisticalMethods.filter(m => !textMethods.includes(m));
+                  setSelectedStatisticalMethods([...vals, ...currentNonText]);
+                }}
               />
             </Form.Item>
 
             <Form.Item label="Machine Learning Evaluation Methods">
               <Checkbox.Group
                 options={mlMethods.map((m) => ({ label: m, value: m }))}
-                value={selectedStatisticalMethods}
-                onChange={setSelectedStatisticalMethods}
+                value={selectedStatisticalMethods.filter(m => mlMethods.includes(m))}
+                onChange={(vals) => {
+                  const currentNonML = selectedStatisticalMethods.filter(m => !mlMethods.includes(m));
+                  setSelectedStatisticalMethods([...vals, ...currentNonML]);
+                }}
               />
             </Form.Item>
 
@@ -209,7 +225,6 @@ const DataQualityEvaluation = () => {
                 />
               </Form.Item>
             )}
-
 
             <Form.Item>
               <Button type="primary" onClick={handleEvaluate} loading={loading} block>
@@ -230,35 +245,121 @@ const DataQualityEvaluation = () => {
 
               <Table dataSource={resultData.map((item, index) => ({ key: index, ...item }))} pagination={false} bordered columns={tableColumns} />
 
-              {/* random-forest图表 */}
+              {/* ML model evaluation charts */}
               {isMLMethod && (
-                <>
-                  <Title level={5} style={{ marginTop: 40 }}>
-                    Random Forest Evaluation Charts
-                  </Title>
-
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart
-                      data={resultData.filter((r) => r.dataset)}
-                      margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis dataKey="dataset" />
-                      <YAxis />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
-                        <LabelList dataKey="accuracy" position="top" />
-                      </Bar>
-                      <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
-                        <LabelList dataKey="f1_score" position="top" />
-                      </Bar>
-                      <Bar dataKey="precision" name="Precision" fill="#ffc658">
-                        <LabelList dataKey="precision" position="top" />
-                      </Bar>
-                    </BarChart>
-                  </ResponsiveContainer>
-                </>
+                <div style={{ marginTop: 40 }}>
+                  <Title level={4}>Machine Learning Model Evaluation</Title>
+                  
+                  <Tabs defaultActiveKey="1">
+                    {selectedStatisticalMethods.includes("random-forest") && (
+                      <TabPane tab="Random Forest" key="1">
+                        <ResponsiveContainer width="100%" height={300}>
+                          <BarChart
+                            data={getRFResults()}
+                            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="dataset" />
+                            <YAxis />
+                            <Tooltip />
+                            <Legend />
+                            <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
+                              <LabelList dataKey="accuracy" position="top" />
+                            </Bar>
+                            <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
+                              <LabelList dataKey="f1_score" position="top" />
+                            </Bar>
+                            <Bar dataKey="precision" name="Precision" fill="#ffc658">
+                              <LabelList dataKey="precision" position="top" />
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </TabPane>
+                    )}
+                    
+                    {selectedStatisticalMethods.includes("svm") && (
+                      <TabPane tab="SVM" key="2">
+                        <ResponsiveContainer width="100%" height={300}>
+                          <BarChart
+                            data={getSVMResults()}
+                            margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis dataKey="dataset" />
+                            <YAxis />
+                            <Tooltip />
+                            <Legend />
+                            <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
+                              <LabelList dataKey="accuracy" position="top" />
+                            </Bar>
+                            <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
+                              <LabelList dataKey="f1_score" position="top" />
+                            </Bar>
+                            <Bar dataKey="precision" name="Precision" fill="#ffc658">
+                              <LabelList dataKey="precision" position="top" />
+                            </Bar>
+                          </BarChart>
+                        </ResponsiveContainer>
+                      </TabPane>
+                    )}
+                    
+                    {selectedStatisticalMethods.includes("random-forest") && selectedStatisticalMethods.includes("svm") && (
+                      <TabPane tab="Model Comparison" key="3">
+                        <div style={{ display: "flex", justifyContent: "space-around" }}>
+                          <div style={{ width: "45%" }}>
+                            <Title level={5} style={{ textAlign: "center" }}>Original Data</Title>
+                            <ResponsiveContainer width="100%" height={300}>
+                              <BarChart
+                                data={resultData.filter(r => r.dataset === "Original")}
+                                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                              >
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="metric" />
+                                <YAxis />
+                                <Tooltip />
+                                <Legend />
+                                <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
+                                  <LabelList dataKey="accuracy" position="top" />
+                                </Bar>
+                                <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
+                                  <LabelList dataKey="f1_score" position="top" />
+                                </Bar>
+                                <Bar dataKey="precision" name="Precision" fill="#ffc658">
+                                  <LabelList dataKey="precision" position="top" />
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                          
+                          <div style={{ width: "45%" }}>
+                            <Title level={5} style={{ textAlign: "center" }}>Anonymized Data</Title>
+                            <ResponsiveContainer width="100%" height={300}>
+                              <BarChart
+                                data={resultData.filter(r => r.dataset === "Anonymized")}
+                                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
+                              >
+                                <CartesianGrid strokeDasharray="3 3" />
+                                <XAxis dataKey="metric" />
+                                <YAxis />
+                                <Tooltip />
+                                <Legend />
+                                <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
+                                  <LabelList dataKey="accuracy" position="top" />
+                                </Bar>
+                                <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
+                                  <LabelList dataKey="f1_score" position="top" />
+                                </Bar>
+                                <Bar dataKey="precision" name="Precision" fill="#ffc658">
+                                  <LabelList dataKey="precision" position="top" />
+                                </Bar>
+                              </BarChart>
+                            </ResponsiveContainer>
+                          </div>
+                        </div>
+                      </TabPane>
+                    )}
+                  </Tabs>
+                </div>
               )}
             </>
           )}

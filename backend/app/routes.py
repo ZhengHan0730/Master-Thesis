@@ -29,7 +29,12 @@ from math import log2
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, f1_score, precision_score
-
+from sklearn.svm import LinearSVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.pipeline import Pipeline
+from sklearn.calibration import CalibratedClassifierCV
+import time
 
 
 bp = Blueprint('main', __name__)
@@ -1152,18 +1157,126 @@ def evaluate_random_forest_quality(original_df, anonymized_df, feature_columns, 
 
     return results
 
+# svm
+def evaluate_svm_quality(original_df, anonymized_df, feature_columns, label_column):
+    """
+    用优化的线性SVM对比原始数据和匿名数据的预测性能变化。
+    """
+    
+    results = []
+    print(f"SVM评估开始，处理 {len(original_df)} 行数据")
+    start_time = time.time()
 
+    if not label_column:
+        raise ValueError('必须提供 label 列用于 supervised learning')
 
+    if label_column not in original_df.columns or label_column not in anonymized_df.columns:
+        raise ValueError(f"目标列 {label_column} 不存在于数据中")
+
+    # 特征和标签 - 处理原始数据
+    X_orig = original_df[feature_columns].copy()
+    y_orig = original_df[label_column].copy()
+    
+    # 处理缺失的标签值
+    valid_labels_mask = ~y_orig.isna()
+    X_orig = X_orig[valid_labels_mask]
+    y_orig = y_orig[valid_labels_mask]
+    
+    # 进行one-hot编码
+    X_orig = pd.get_dummies(X_orig)
+    
+    # 处理匿名数据
+    X_anon = anonymized_df[feature_columns].copy()
+    y_anon = anonymized_df[label_column].copy()
+    
+    valid_labels_mask_anon = ~y_anon.isna()
+    X_anon = X_anon[valid_labels_mask_anon]
+    y_anon = y_anon[valid_labels_mask_anon]
+    
+    X_anon = pd.get_dummies(X_anon)
+
+    # 取交集特征列
+    common_cols = list(set(X_orig.columns) & set(X_anon.columns))
+    X_orig = X_orig[common_cols]
+    X_anon = X_anon[common_cols]
+
+    # 切分训练/测试集
+    X_train, X_test, y_train, y_test = train_test_split(X_orig, y_orig, test_size=0.3, random_state=42)
+    
+    # 创建高效的SVM管道
+    base_svc = LinearSVC(
+        dual=False,     # 当样本数>特征数时更快
+        C=1.0,
+        max_iter=3000,
+        tol=1e-4,
+        random_state=42
+    )
+    
+    # 使用管道进行预处理和模型训练
+    pipeline = Pipeline([
+        ('imputer', SimpleImputer(strategy='mean')),
+        ('scaler', StandardScaler()),
+        ('svm', base_svc)
+    ])
+    
+    print(f"开始训练原始数据SVM模型... ({time.time() - start_time:.1f}秒)")
+    pipeline.fit(X_train, y_train)
+    y_pred_orig = pipeline.predict(X_test)
+    
+    accuracy = accuracy_score(y_test, y_pred_orig)
+    f1 = f1_score(y_test, y_pred_orig, average='macro')
+    precision = precision_score(y_test, y_pred_orig, average='macro')
+    
+    results.append({
+        'metric': 'svm',
+        'dataset': 'Original',
+        'accuracy': round(accuracy, 4),
+        'f1_score': round(f1, 4),
+        'precision': round(precision, 4)
+    })
+    
+    print(f"原始数据评估完成，准确率: {accuracy:.4f} ({time.time() - start_time:.1f}秒)")
+
+    # 匿名数据
+    X_train_an, X_test_an, y_train_an, y_test_an = train_test_split(X_anon, y_anon, test_size=0.3, random_state=42)
+    
+    # 匿名数据使用新的管道实例
+    pipeline_anon = Pipeline([
+        ('imputer', SimpleImputer(strategy='mean')),
+        ('scaler', StandardScaler()),
+        ('svm', LinearSVC(dual=False, C=1.0, max_iter=3000, tol=1e-4, random_state=42))
+    ])
+    
+    print(f"开始训练匿名数据SVM模型... ({time.time() - start_time:.1f}秒)")
+    pipeline_anon.fit(X_train_an, y_train_an)
+    y_pred_an = pipeline_anon.predict(X_test_an)
+    
+    accuracy_an = accuracy_score(y_test_an, y_pred_an)
+    f1_an = f1_score(y_test_an, y_pred_an, average='macro')
+    precision_an = precision_score(y_test_an, y_pred_an, average='macro')
+    
+    results.append({
+        'metric': 'svm',
+        'dataset': 'Anonymized',
+        'accuracy': round(accuracy_an, 4),
+        'f1_score': round(f1_an, 4),
+        'precision': round(precision_an, 4)
+    })
+    
+    total_time = time.time() - start_time
+    print(f"SVM评估完成，总耗时: {total_time:.1f}秒")
+
+    return results
 
 # 区间值预处理
-def parse_range(value):
-    """处理各种不同格式的区间值，返回中点值"""
+def parse_range(value, default_value=0):
+    """处理各种不同格式的区间值，返回中点值，避免返回NaN"""
     # 如果是None或不是字符串，尝试直接转为浮点数
     if not isinstance(value, str):
         try:
             return float(value)
         except:
-            return np.nan
+            return default_value  # 返回默认值而不是NaN
     
     # 处理 "x-y" 格式
     if '-' in value:
@@ -1176,7 +1289,6 @@ def parse_range(value):
     # 处理 "[x,y]" 或 "(x,y)" 格式
     if (',' in value) and (value.startswith('[') or value.startswith('(')) and (value.endswith(']') or value.endswith(')')):
         try:
-            # 移除括号
             clean_value = value.replace('[', '').replace(']', '').replace('(', '').replace(')', '')
             start, end = map(float, clean_value.split(','))
             return (start + end) / 2
@@ -1187,14 +1299,12 @@ def parse_range(value):
     try:
         return float(value)
     except:
-        return np.nan
+        return default_value  # 返回默认值而不是NaN
 
 # 新增：用于将原始日期或匿名化日期区间转为距今天数
-def convert_date_to_days(column, is_range=False):
+def convert_date_to_days(column, is_range=False, default_days=0):
     """
-    将日期列转换为距今的天数：
-    - 若 is_range=True，则处理为区间（如 '2009-01-01 - 2024-07-01'），取中点计算距今天数
-    - 若 is_range=False，则为普通单个日期字段
+    将日期列转换为距今的天数，使用默认值避免空值
     """
     today = datetime.today()
 
@@ -1202,43 +1312,45 @@ def convert_date_to_days(column, is_range=False):
         def parse_date_range(date_str):
             try:
                 if pd.isna(date_str):
-                    return None
+                    return default_days
                 start_str, end_str = date_str.split(' - ')
                 start = pd.to_datetime(start_str.strip(), errors='coerce')
                 end = pd.to_datetime(end_str.strip(), errors='coerce')
                 if pd.isna(start) or pd.isna(end):
-                    return None
+                    return default_days
                 midpoint = start + (end - start) / 2
                 return (today - midpoint).days
             except Exception as e:
                 print(f"日期区间解析失败: {date_str}，错误: {e}")
-                return None
+                return default_days
 
         return column.apply(parse_date_range)
 
     else:
-        column = pd.to_datetime(column, errors='coerce')
-        return (today - column).dt.days
+        # 使用fillna处理转换后的空值
+        dates = pd.to_datetime(column, errors='coerce')
+        days = (today - dates).dt.days
+        return days.fillna(default_days)
    
 
 # 对列进行预处理
-def preprocess_column(column):
+def preprocess_column(column, default_numeric=0, default_date=0):
     """
-    自动识别并处理列数据：
-    - 日期或日期区间：调用 convert_date_to_days
-    - 数值区间或普通数字：调用 parse_range
+    自动识别并处理列数据，避免返回空值
     """
-    sample_value = column.dropna().astype(str).iloc[0] if not column.dropna().empty else ''
+    # 先处理完全空的列
+    if column.dropna().empty:
+        return pd.Series([default_numeric] * len(column))
+    
+    sample_value = column.dropna().astype(str).iloc[0]
 
-    # 简单规则判断是否为日期或日期区间（包含年信息 + 分隔符）
+    # 简单规则判断是否为日期或日期区间
     if any(ch in sample_value for ch in ['-', '/']) and any(kw in sample_value for kw in ['20', '19']):
         is_range = ' - ' in sample_value
-        return convert_date_to_days(column, is_range=is_range)
+        return convert_date_to_days(column, is_range=is_range, default_days=default_date)
 
     # 其余默认按数值区间处理
-    return column.apply(parse_range)
-
-
+    return column.apply(lambda x: parse_range(x, default_value=default_numeric))
 
 @bp.route('/evaluation', methods=['POST']) 
 def data_quality_evaluation():     
@@ -1274,17 +1386,18 @@ def data_quality_evaluation():
     # 区分数值型统计方法和文本型统计方法
     numeric_metrics = ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']
     text_metrics = ['js-divergence', 'mutual-information']
-    ml_metrics = ['random-forest']
+    ml_metrics = ['random-forest', 'svm']
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
     numeric_columns_to_compare = columns_to_compare.copy()
     
-    if any(metric in metrics for metric in numeric_metrics):
+    if any(metric in metrics for metric in numeric_metrics+ ml_metrics):
         # 收集非数值类型的列
         non_numeric_cols = [
             col for col in columns_to_compare
             if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
         ]
         
+        # 对非数值类型的列尝试预处理
         # 对非数值类型的列尝试预处理
         for col in non_numeric_cols:
             try:
@@ -1293,13 +1406,12 @@ def data_quality_evaluation():
                 original_df[processed_col_name] = preprocess_column(original_df[col])
                 anonymized_df[processed_col_name] = preprocess_column(anonymized_df[col])
 
-                # 强制转换为 float 确保后续处理无误
-                original_df[processed_col_name] = pd.to_numeric(original_df[processed_col_name], errors='coerce').astype(float)
-                anonymized_df[processed_col_name] = pd.to_numeric(anonymized_df[processed_col_name], errors='coerce').astype(float)
+                # 强制转换为 float 并填充任何仍然存在的NaN值
+                original_df[processed_col_name] = pd.to_numeric(original_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
+                anonymized_df[processed_col_name] = pd.to_numeric(anonymized_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
 
                 # 更新列名用于后续比较
                 numeric_columns_to_compare = [processed_col_name if c == col else c for c in numeric_columns_to_compare]
-
             except Exception as e:
                 return jsonify({'error': f'数据预处理失败: {col}, 错误: {str(e)}'}), 400
 
@@ -1351,7 +1463,19 @@ def data_quality_evaluation():
                 )
             except Exception as e:
                 return jsonify({'error': f'random-forest 评估失败: {str(e)}'}), 400
-    
+            
+        if 'svm' in metrics:
+            try:
+                results.extend(
+                    evaluate_svm_quality(
+                        original_df, anonymized_df,
+                        feature_columns=numeric_columns_to_compare,
+                        label_column=label_column
+                    )
+                )
+            except Exception as e:
+                return jsonify({'error': f'SVM 评估失败: {str(e)}'}), 400
+        
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
     
