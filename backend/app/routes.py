@@ -34,6 +34,7 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.neural_network import MLPClassifier
 import time
 
 
@@ -1268,6 +1269,274 @@ def evaluate_svm_quality(original_df, anonymized_df, feature_columns, label_colu
 
     return results
 
+# MLP
+def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_column):
+    """
+    使用多层感知器(MLP)神经网络对比原始数据和匿名数据的预测性能变化。
+    增加了更强健的类型处理和错误捕获。
+
+    输入：
+    - original_df: 原始DataFrame
+    - anonymized_df: 匿名化后的DataFrame
+    - feature_columns: 参与建模的特征列列表
+    - label_column: 目标列（标签）
+
+    输出：
+    - results: 列表，包含原始和匿名数据的MLP评估指标
+    """
+    
+    results = []
+    print(f"MLP评估开始，处理 {len(original_df)} 行数据")
+    start_time = time.time()
+
+    if not label_column:
+        raise ValueError('必须提供 label 列用于 supervised learning')
+
+    if label_column not in original_df.columns or label_column not in anonymized_df.columns:
+        raise ValueError(f"目标列 {label_column} 不存在于数据中")
+
+    # 定义一个帮助函数处理数据集
+    def prepare_dataset(df, feature_cols, label_col):
+        try:
+            # 复制数据避免修改原始数据
+            df_copy = df.copy()
+            
+            # 处理标签列
+            y = df_copy[label_col].copy()
+            
+            # 使用LabelEncoder处理分类标签
+            if y.dtype == 'object' or y.dtype.name == 'category':
+                label_encoder = LabelEncoder()
+                y = label_encoder.fit_transform(y.astype(str))
+            else:
+                # 尝试转换为数值类型
+                y = pd.to_numeric(y, errors='coerce')
+            
+            # 移除标签中的NaN值
+            valid_indices = ~pd.isna(y)
+            if not valid_indices.all():
+                print(f"发现并移除了 {(~valid_indices).sum()} 行带有NaN标签的数据")
+                df_copy = df_copy.loc[valid_indices]
+                y = y[valid_indices]
+            
+            # 特征数据处理
+            X = df_copy[feature_cols].copy()
+            
+            # 检查并转换特征数据类型
+            for col in X.columns:
+                # 对非数值列进行特殊处理
+                if X[col].dtype == 'object' or X[col].dtype.name == 'category':
+                    # 检查是否可能是数值型
+                    try:
+                        X[col] = pd.to_numeric(X[col], errors='coerce')
+                    except:
+                        # 如果无法转换为数值，则将其转换为分类编码
+                        X[col] = X[col].astype(str).fillna('missing').factorize()[0]
+                        print(f"列 {col} 转换为分类编码")
+            
+            # 处理潜在的NaN值（转换为数值后可能产生）
+            X = X.fillna(X.mean()).fillna(0)
+            
+            # 进行one-hot编码
+            X = pd.get_dummies(X)
+            
+            return X, y
+        
+        except Exception as e:
+            print(f"数据预处理失败: {str(e)}")
+            raise
+    
+    # 处理原始数据
+    try:
+        X_orig, y_orig = prepare_dataset(original_df, feature_columns, label_column)
+        print(f"原始数据特征形状: {X_orig.shape}, 标签形状: {y_orig.shape}")
+    except Exception as e:
+        print(f"原始数据预处理错误: {str(e)}")
+        results.append({
+            'metric': 'mlp',
+            'dataset': 'Original',
+            'accuracy': None,
+            'f1_score': None,
+            'precision': None,
+            'error': str(e)
+        })
+        return results
+    
+    # 处理匿名数据
+    try:
+        X_anon, y_anon = prepare_dataset(anonymized_df, feature_columns, label_column)
+        print(f"匿名数据特征形状: {X_anon.shape}, 标签形状: {y_anon.shape}")
+    except Exception as e:
+        print(f"匿名数据预处理错误: {str(e)}")
+        results.append({
+            'metric': 'mlp',
+            'dataset': 'Anonymized',
+            'accuracy': None,
+            'f1_score': None,
+            'precision': None,
+            'error': str(e)
+        })
+        # 继续评估原始数据
+        
+    # 获取列的交集
+    try:
+        # 取交集特征列
+        common_cols = list(set(X_orig.columns) & set(X_anon.columns))
+        if not common_cols:
+            raise ValueError("原始数据和匿名数据在one-hot编码后没有共同特征列")
+        
+        X_orig = X_orig[common_cols]
+        X_anon = X_anon[common_cols]
+        
+        print(f"特征列交集数量: {len(common_cols)}")
+    except Exception as e:
+        if 'X_anon' not in locals():
+            # 仅评估原始数据
+            common_cols = X_orig.columns.tolist()
+            X_orig = X_orig[common_cols]
+        else:
+            print(f"特征列交集处理错误: {str(e)}")
+            results.append({
+                'metric': 'mlp',
+                'dataset': 'Both',
+                'accuracy': None,
+                'f1_score': None,
+                'precision': None,
+                'error': str(e)
+            })
+            return results
+
+    # 评估原始数据
+    try:
+        X_train, X_test, y_train, y_test = train_test_split(X_orig, y_orig, test_size=0.3, random_state=42)
+        
+        # 构建MLP分类器，配置合适的参数
+        mlp = MLPClassifier(
+            hidden_layer_sizes=(100, 50),  # 两个隐藏层
+            activation='relu',              
+            solver='adam',                  
+            alpha=0.0001,                   # L2正则化
+            batch_size='auto',              
+            learning_rate='adaptive',       
+            max_iter=300,                   
+            early_stopping=True,            
+            validation_fraction=0.1,        
+            n_iter_no_change=10,            
+            random_state=42,
+            verbose=False  # 设为True可以查看训练过程
+        )
+        
+        # 使用管道处理缺失值和标准化
+        pipeline = Pipeline([
+            ('imputer', SimpleImputer(strategy='mean')),
+            ('scaler', StandardScaler()),
+            ('mlp', mlp)
+        ])
+        
+        print(f"开始训练原始数据MLP模型... ({time.time() - start_time:.1f}秒)")
+        pipeline.fit(X_train, y_train)
+        y_pred_orig = pipeline.predict(X_test)
+        
+        # 确保计算指标时数据类型兼容
+        accuracy = accuracy_score(y_test, y_pred_orig)
+        
+        # 检查y_test的类型是否适合计算F1和精确度
+        if len(np.unique(y_test)) < 2:
+            print("警告: 测试集中类别数少于2，无法正确计算F1和精确度")
+            f1 = precision = 0.0
+        else:
+            f1 = f1_score(y_test, y_pred_orig, average='macro', zero_division=0)
+            precision = precision_score(y_test, y_pred_orig, average='macro', zero_division=0)
+        
+        results.append({
+            'metric': 'mlp',
+            'dataset': 'Original',
+            'accuracy': round(accuracy, 4),
+            'f1_score': round(f1, 4),
+            'precision': round(precision, 4)
+        })
+        
+        print(f"原始数据评估完成，准确率: {accuracy:.4f} ({time.time() - start_time:.1f}秒)")
+    
+    except Exception as e:
+        print(f"原始数据MLP评估失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        results.append({
+            'metric': 'mlp',
+            'dataset': 'Original',
+            'accuracy': None,
+            'f1_score': None,
+            'precision': None,
+            'error': str(e)
+        })
+
+    # 评估匿名数据（如果成功预处理）
+    if 'X_anon' in locals() and 'y_anon' in locals():
+        try:
+            X_train_an, X_test_an, y_train_an, y_test_an = train_test_split(X_anon, y_anon, test_size=0.3, random_state=42)
+            
+            # 匿名数据使用新的管道实例
+            pipeline_anon = Pipeline([
+                ('imputer', SimpleImputer(strategy='mean')),
+                ('scaler', StandardScaler()),
+                ('mlp', MLPClassifier(
+                    hidden_layer_sizes=(100, 50),
+                    activation='relu',
+                    solver='adam',
+                    alpha=0.0001,
+                    batch_size='auto',
+                    learning_rate='adaptive',
+                    max_iter=300,
+                    early_stopping=True,
+                    validation_fraction=0.1,
+                    n_iter_no_change=10,
+                    random_state=42
+                ))
+            ])
+            
+            print(f"开始训练匿名数据MLP模型... ({time.time() - start_time:.1f}秒)")
+            pipeline_anon.fit(X_train_an, y_train_an)
+            y_pred_an = pipeline_anon.predict(X_test_an)
+            
+            # 同样确保计算指标时数据类型兼容
+            accuracy_an = accuracy_score(y_test_an, y_pred_an)
+            
+            if len(np.unique(y_test_an)) < 2:
+                print("警告: 匿名测试集中类别数少于2，无法正确计算F1和精确度")
+                f1_an = precision_an = 0.0
+            else:
+                f1_an = f1_score(y_test_an, y_pred_an, average='macro', zero_division=0)
+                precision_an = precision_score(y_test_an, y_pred_an, average='macro', zero_division=0)
+            
+            results.append({
+                'metric': 'mlp',
+                'dataset': 'Anonymized',
+                'accuracy': round(accuracy_an, 4),
+                'f1_score': round(f1_an, 4),
+                'precision': round(precision_an, 4)
+            })
+            
+            print(f"匿名数据评估完成，准确率: {accuracy_an:.4f} ({time.time() - start_time:.1f}秒)")
+        
+        except Exception as e:
+            print(f"匿名数据MLP评估失败: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            results.append({
+                'metric': 'mlp',
+                'dataset': 'Anonymized',
+                'accuracy': None,
+                'f1_score': None,
+                'precision': None,
+                'error': str(e)
+            })
+    
+    total_time = time.time() - start_time
+    print(f"MLP评估完成，总耗时: {total_time:.1f}秒")
+
+    return results
+
 # 区间值预处理
 def parse_range(value, default_value=0):
     """处理各种不同格式的区间值，返回中点值，避免返回NaN"""
@@ -1386,7 +1655,7 @@ def data_quality_evaluation():
     # 区分数值型统计方法和文本型统计方法
     numeric_metrics = ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']
     text_metrics = ['js-divergence', 'mutual-information']
-    ml_metrics = ['random-forest', 'svm']
+    ml_metrics = ['random-forest', 'svm', 'mlp']
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
     numeric_columns_to_compare = columns_to_compare.copy()
     
@@ -1475,6 +1744,18 @@ def data_quality_evaluation():
                 )
             except Exception as e:
                 return jsonify({'error': f'SVM 评估失败: {str(e)}'}), 400
+            
+        if 'mlp' in metrics:
+            try:
+                results.extend(
+                    evaluate_mlp_quality(
+                        original_df, anonymized_df,
+                        feature_columns=numeric_columns_to_compare,
+                        label_column=label_column
+                    )
+                )
+            except Exception as e:
+                return jsonify({'error': f'MLP 评估失败: {str(e)}'}), 400
         
     result_id = str(uuid.uuid4())     
     quality_results[result_id] = results      
