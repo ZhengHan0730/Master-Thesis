@@ -1094,13 +1094,16 @@ def calculate_mutual_information(original_df, anonymized_df, columns_to_compare)
     return results
 
 # random forest
-def evaluate_random_forest_quality(original_df, anonymized_df, feature_columns, label_column):
+def evaluate_random_forest_quality(original_train_df, original_test_df, anonymized_train_df, anonymized_test_df, feature_columns, label_column):
     """
     用 Random Forest 对比原始数据和匿名数据的预测性能变化。
+    使用用户提供的训练集和测试集进行评估。
 
     输入：
-    - original_df: 原始DataFrame
-    - anonymized_df: 匿名化后的DataFrame
+    - original_train_df: 原始训练集DataFrame
+    - original_test_df: 原始测试集DataFrame
+    - anonymized_train_df: 匿名化训练集DataFrame
+    - anonymized_test_df: 匿名化测试集DataFrame
     - feature_columns: 参与建模的特征列列表
     - label_column: 目标列（标签）
 
@@ -1113,100 +1116,157 @@ def evaluate_random_forest_quality(original_df, anonymized_df, feature_columns, 
     if not label_column:
         raise ValueError('必须提供 label 列用于 supervised learning')
 
-    if label_column not in original_df.columns or label_column not in anonymized_df.columns:
-        raise ValueError(f"目标列 {label_column} 不存在于数据中")
+    # 检查标签列是否存在于所有数据集中
+    for df_name, df in [('原始训练集', original_train_df), ('原始测试集', original_test_df), 
+                        ('匿名化训练集', anonymized_train_df), ('匿名化测试集', anonymized_test_df)]:
+        if label_column not in df.columns:
+            raise ValueError(f"{df_name}中不存在标签列 {label_column}")
 
-    # 特征和标签
-    X_orig = original_df[feature_columns]
-    y_orig = original_df[label_column]
-    X_anon = anonymized_df[feature_columns]
-    y_anon = anonymized_df[label_column]
+    # 准备原始数据的特征和标签
+    X_orig_train = original_train_df[feature_columns]
+    y_orig_train = original_train_df[label_column]
+    X_orig_test = original_test_df[feature_columns]
+    y_orig_test = original_test_df[label_column]
+
+    # 准备匿名数据的特征和标签
+    X_anon_train = anonymized_train_df[feature_columns]
+    y_anon_train = anonymized_train_df[label_column]
+    X_anon_test = anonymized_test_df[feature_columns]
+    y_anon_test = anonymized_test_df[label_column]
 
     # one-hot编码
-    X_orig = pd.get_dummies(X_orig)
-    X_anon = pd.get_dummies(X_anon)
+    X_orig_train = pd.get_dummies(X_orig_train)
+    X_orig_test = pd.get_dummies(X_orig_test)
+    X_anon_train = pd.get_dummies(X_anon_train)
+    X_anon_test = pd.get_dummies(X_anon_test)
 
-    # 取交集特征列
-    common_cols = list(set(X_orig.columns) & set(X_anon.columns))
-    X_orig = X_orig[common_cols]
-    X_anon = X_anon[common_cols]
-
-    # 切分训练/测试集
-    X_train, X_test, y_train, y_test = train_test_split(X_orig, y_orig, test_size=0.3, random_state=42)
+    # 确保所有数据集具有相同的特征列
+    all_columns = set()
+    for df in [X_orig_train, X_orig_test, X_anon_train, X_anon_test]:
+        all_columns.update(df.columns)
     
+    # 为缺失列添加零值列
+    for df in [X_orig_train, X_orig_test, X_anon_train, X_anon_test]:
+        for col in all_columns:
+            if col not in df.columns:
+                df[col] = 0
+    
+    # 确保列顺序一致
+    common_cols = sorted(list(all_columns))
+    X_orig_train = X_orig_train[common_cols]
+    X_orig_test = X_orig_test[common_cols]
+    X_anon_train = X_anon_train[common_cols]
+    X_anon_test = X_anon_test[common_cols]
+
+    # 训练和评估原始数据模型
     clf = RandomForestClassifier(n_estimators=50, max_depth=10, random_state=42)
-    clf.fit(X_train, y_train)
-    y_pred_orig = clf.predict(X_test)
+    clf.fit(X_orig_train, y_orig_train)
+    y_pred_orig = clf.predict(X_orig_test)
 
     results.append({
         'metric': 'random-forest',
         'dataset': 'Original',
-        'accuracy': round(accuracy_score(y_test, y_pred_orig), 4),
-        'f1_score': round(f1_score(y_test, y_pred_orig, average='macro'), 4),
-        'precision': round(precision_score(y_test, y_pred_orig, average='macro'), 4)
+        'accuracy': round(accuracy_score(y_orig_test, y_pred_orig), 4),
+        'f1_score': round(f1_score(y_orig_test, y_pred_orig, average='macro'), 4),
+        'precision': round(precision_score(y_orig_test, y_pred_orig, average='macro'), 4)
     })
 
-    # 匿名数据
-    X_train_an, X_test_an, y_train_an, y_test_an = train_test_split(X_anon, y_anon, test_size=0.3, random_state=42)
+    # 训练和评估匿名数据模型
     clf_an = RandomForestClassifier(n_estimators=50, max_depth=10, random_state=42)
-    clf_an.fit(X_train_an, y_train_an)
-    y_pred_an = clf_an.predict(X_test_an)
+    clf_an.fit(X_anon_train, y_anon_train)
+    y_pred_an = clf_an.predict(X_anon_test)
 
     results.append({
         'metric': 'random-forest',
         'dataset': 'Anonymized',
-        'accuracy': round(accuracy_score(y_test_an, y_pred_an), 4),
-        'f1_score': round(f1_score(y_test_an, y_pred_an, average='macro'), 4),
-        'precision': round(precision_score(y_test_an, y_pred_an, average='macro'), 4)
+        'accuracy': round(accuracy_score(y_anon_test, y_pred_an), 4),
+        'f1_score': round(f1_score(y_anon_test, y_pred_an, average='macro'), 4),
+        'precision': round(precision_score(y_anon_test, y_pred_an, average='macro'), 4)
     })
 
     return results
 
 # svm
-def evaluate_svm_quality(original_df, anonymized_df, feature_columns, label_column):
+def evaluate_svm_quality(original_train_df, original_test_df, anonymized_train_df, anonymized_test_df, feature_columns, label_column):
     """
     用优化的线性SVM对比原始数据和匿名数据的预测性能变化。
+    使用用户提供的训练集和测试集进行评估。
+    
+    输入：
+    - original_train_df: 原始训练集DataFrame
+    - original_test_df: 原始测试集DataFrame
+    - anonymized_train_df: 匿名化训练集DataFrame
+    - anonymized_test_df: 匿名化测试集DataFrame
+    - feature_columns: 参与建模的特征列列表
+    - label_column: 目标列（标签）
     """
     
     results = []
-    print(f"SVM评估开始，处理 {len(original_df)} 行数据")
+    print(f"SVM评估开始，处理原始训练集 {len(original_train_df)} 行，测试集 {len(original_test_df)} 行数据")
     start_time = time.time()
 
     if not label_column:
         raise ValueError('必须提供 label 列用于 supervised learning')
 
-    if label_column not in original_df.columns or label_column not in anonymized_df.columns:
-        raise ValueError(f"目标列 {label_column} 不存在于数据中")
+    # 检查标签列是否存在于所有数据集中
+    for df_name, df in [('原始训练集', original_train_df), ('原始测试集', original_test_df), 
+                        ('匿名化训练集', anonymized_train_df), ('匿名化测试集', anonymized_test_df)]:
+        if label_column not in df.columns:
+            raise ValueError(f"{df_name}中不存在标签列 {label_column}")
 
-    # 特征和标签 - 处理原始数据
-    X_orig = original_df[feature_columns].copy()
-    y_orig = original_df[label_column].copy()
+    # 准备原始数据的特征和标签
+    X_orig_train = original_train_df[feature_columns].copy()
+    y_orig_train = original_train_df[label_column].copy()
+    X_orig_test = original_test_df[feature_columns].copy()
+    y_orig_test = original_test_df[label_column].copy()
     
     # 处理缺失的标签值
-    valid_labels_mask = ~y_orig.isna()
-    X_orig = X_orig[valid_labels_mask]
-    y_orig = y_orig[valid_labels_mask]
+    valid_labels_mask_train = ~y_orig_train.isna()
+    X_orig_train = X_orig_train[valid_labels_mask_train]
+    y_orig_train = y_orig_train[valid_labels_mask_train]
+    
+    valid_labels_mask_test = ~y_orig_test.isna()
+    X_orig_test = X_orig_test[valid_labels_mask_test]
+    y_orig_test = y_orig_test[valid_labels_mask_test]
     
     # 进行one-hot编码
-    X_orig = pd.get_dummies(X_orig)
+    X_orig_train = pd.get_dummies(X_orig_train)
+    X_orig_test = pd.get_dummies(X_orig_test)
     
-    # 处理匿名数据
-    X_anon = anonymized_df[feature_columns].copy()
-    y_anon = anonymized_df[label_column].copy()
+    # 准备匿名数据的特征和标签
+    X_anon_train = anonymized_train_df[feature_columns].copy()
+    y_anon_train = anonymized_train_df[label_column].copy()
+    X_anon_test = anonymized_test_df[feature_columns].copy()
+    y_anon_test = anonymized_test_df[label_column].copy()
     
-    valid_labels_mask_anon = ~y_anon.isna()
-    X_anon = X_anon[valid_labels_mask_anon]
-    y_anon = y_anon[valid_labels_mask_anon]
+    valid_labels_mask_anon_train = ~y_anon_train.isna()
+    X_anon_train = X_anon_train[valid_labels_mask_anon_train]
+    y_anon_train = y_anon_train[valid_labels_mask_anon_train]
     
-    X_anon = pd.get_dummies(X_anon)
+    valid_labels_mask_anon_test = ~y_anon_test.isna()
+    X_anon_test = X_anon_test[valid_labels_mask_anon_test]
+    y_anon_test = y_anon_test[valid_labels_mask_anon_test]
+    
+    X_anon_train = pd.get_dummies(X_anon_train)
+    X_anon_test = pd.get_dummies(X_anon_test)
 
-    # 取交集特征列
-    common_cols = list(set(X_orig.columns) & set(X_anon.columns))
-    X_orig = X_orig[common_cols]
-    X_anon = X_anon[common_cols]
-
-    # 切分训练/测试集
-    X_train, X_test, y_train, y_test = train_test_split(X_orig, y_orig, test_size=0.3, random_state=42)
+    # 确保所有数据集具有相同的特征列
+    all_columns = set()
+    for df in [X_orig_train, X_orig_test, X_anon_train, X_anon_test]:
+        all_columns.update(df.columns)
+    
+    # 为缺失列添加零值列
+    for df in [X_orig_train, X_orig_test, X_anon_train, X_anon_test]:
+        for col in all_columns:
+            if col not in df.columns:
+                df[col] = 0
+    
+    # 确保列顺序一致
+    common_cols = sorted(list(all_columns))
+    X_orig_train = X_orig_train[common_cols]
+    X_orig_test = X_orig_test[common_cols]
+    X_anon_train = X_anon_train[common_cols]
+    X_anon_test = X_anon_test[common_cols]
     
     # 创建高效的SVM管道
     base_svc = LinearSVC(
@@ -1225,12 +1285,12 @@ def evaluate_svm_quality(original_df, anonymized_df, feature_columns, label_colu
     ])
     
     print(f"开始训练原始数据SVM模型... ({time.time() - start_time:.1f}秒)")
-    pipeline.fit(X_train, y_train)
-    y_pred_orig = pipeline.predict(X_test)
+    pipeline.fit(X_orig_train, y_orig_train)
+    y_pred_orig = pipeline.predict(X_orig_test)
     
-    accuracy = accuracy_score(y_test, y_pred_orig)
-    f1 = f1_score(y_test, y_pred_orig, average='macro')
-    precision = precision_score(y_test, y_pred_orig, average='macro')
+    accuracy = accuracy_score(y_orig_test, y_pred_orig)
+    f1 = f1_score(y_orig_test, y_pred_orig, average='macro')
+    precision = precision_score(y_orig_test, y_pred_orig, average='macro')
     
     results.append({
         'metric': 'svm',
@@ -1242,9 +1302,6 @@ def evaluate_svm_quality(original_df, anonymized_df, feature_columns, label_colu
     
     print(f"原始数据评估完成，准确率: {accuracy:.4f} ({time.time() - start_time:.1f}秒)")
 
-    # 匿名数据
-    X_train_an, X_test_an, y_train_an, y_test_an = train_test_split(X_anon, y_anon, test_size=0.3, random_state=42)
-    
     # 匿名数据使用新的管道实例
     pipeline_anon = Pipeline([
         ('imputer', SimpleImputer(strategy='mean')),
@@ -1253,12 +1310,12 @@ def evaluate_svm_quality(original_df, anonymized_df, feature_columns, label_colu
     ])
     
     print(f"开始训练匿名数据SVM模型... ({time.time() - start_time:.1f}秒)")
-    pipeline_anon.fit(X_train_an, y_train_an)
-    y_pred_an = pipeline_anon.predict(X_test_an)
+    pipeline_anon.fit(X_anon_train, y_anon_train)
+    y_pred_an = pipeline_anon.predict(X_anon_test)
     
-    accuracy_an = accuracy_score(y_test_an, y_pred_an)
-    f1_an = f1_score(y_test_an, y_pred_an, average='macro')
-    precision_an = precision_score(y_test_an, y_pred_an, average='macro')
+    accuracy_an = accuracy_score(y_anon_test, y_pred_an)
+    f1_an = f1_score(y_anon_test, y_pred_an, average='macro')
+    precision_an = precision_score(y_anon_test, y_pred_an, average='macro')
     
     results.append({
         'metric': 'svm',
@@ -1274,14 +1331,16 @@ def evaluate_svm_quality(original_df, anonymized_df, feature_columns, label_colu
     return results
 
 # MLP
-def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_column):
+def evaluate_mlp_quality(original_train_df, original_test_df, anonymized_train_df, anonymized_test_df, feature_columns, label_column):
     """
     使用多层感知器(MLP)神经网络对比原始数据和匿名数据的预测性能变化。
-    增加了更强健的类型处理和错误捕获。
+    使用用户提供的训练集和测试集进行评估。
 
     输入：
-    - original_df: 原始DataFrame
-    - anonymized_df: 匿名化后的DataFrame
+    - original_train_df: 原始训练集DataFrame
+    - original_test_df: 原始测试集DataFrame
+    - anonymized_train_df: 匿名化训练集DataFrame
+    - anonymized_test_df: 匿名化测试集DataFrame
     - feature_columns: 参与建模的特征列列表
     - label_column: 目标列（标签）
 
@@ -1290,14 +1349,17 @@ def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_colu
     """
     
     results = []
-    print(f"MLP评估开始，处理 {len(original_df)} 行数据")
+    print(f"MLP评估开始，处理原始训练集 {len(original_train_df)} 行，测试集 {len(original_test_df)} 行数据")
     start_time = time.time()
 
     if not label_column:
         raise ValueError('必须提供 label 列用于 supervised learning')
 
-    if label_column not in original_df.columns or label_column not in anonymized_df.columns:
-        raise ValueError(f"目标列 {label_column} 不存在于数据中")
+    # 检查标签列是否存在于所有数据集中
+    for df_name, df in [('原始训练集', original_train_df), ('原始测试集', original_test_df), 
+                        ('匿名化训练集', anonymized_train_df), ('匿名化测试集', anonymized_test_df)]:
+        if label_column not in df.columns:
+            raise ValueError(f"{df_name}中不存在标签列 {label_column}")
 
     # 定义一个帮助函数处理数据集
     def prepare_dataset(df, feature_cols, label_col):
@@ -1352,8 +1414,10 @@ def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_colu
     
     # 处理原始数据
     try:
-        X_orig, y_orig = prepare_dataset(original_df, feature_columns, label_column)
-        print(f"原始数据特征形状: {X_orig.shape}, 标签形状: {y_orig.shape}")
+        X_orig_train, y_orig_train = prepare_dataset(original_train_df, feature_columns, label_column)
+        X_orig_test, y_orig_test = prepare_dataset(original_test_df, feature_columns, label_column)
+        print(f"原始训练集特征形状: {X_orig_train.shape}, 标签形状: {y_orig_train.shape}")
+        print(f"原始测试集特征形状: {X_orig_test.shape}, 标签形状: {y_orig_test.shape}")
     except Exception as e:
         print(f"原始数据预处理错误: {str(e)}")
         results.append({
@@ -1368,8 +1432,10 @@ def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_colu
     
     # 处理匿名数据
     try:
-        X_anon, y_anon = prepare_dataset(anonymized_df, feature_columns, label_column)
-        print(f"匿名数据特征形状: {X_anon.shape}, 标签形状: {y_anon.shape}")
+        X_anon_train, y_anon_train = prepare_dataset(anonymized_train_df, feature_columns, label_column)
+        X_anon_test, y_anon_test = prepare_dataset(anonymized_test_df, feature_columns, label_column)
+        print(f"匿名训练集特征形状: {X_anon_train.shape}, 标签形状: {y_anon_train.shape}")
+        print(f"匿名测试集特征形状: {X_anon_test.shape}, 标签形状: {y_anon_test.shape}")
     except Exception as e:
         print(f"匿名数据预处理错误: {str(e)}")
         results.append({
@@ -1381,39 +1447,41 @@ def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_colu
             'error': str(e)
         })
         # 继续评估原始数据
-        
-    # 获取列的交集
+    
+    # 确保所有数据集具有相同的特征列
     try:
-        # 取交集特征列
-        common_cols = list(set(X_orig.columns) & set(X_anon.columns))
-        if not common_cols:
-            raise ValueError("原始数据和匿名数据在one-hot编码后没有共同特征列")
+        all_columns = set()
+        for df in [X_orig_train, X_orig_test, X_anon_train, X_anon_test]:
+            all_columns.update(df.columns)
         
-        X_orig = X_orig[common_cols]
-        X_anon = X_anon[common_cols]
+        # 为缺失列添加零值列
+        for df in [X_orig_train, X_orig_test, X_anon_train, X_anon_test]:
+            for col in all_columns:
+                if col not in df.columns:
+                    df[col] = 0
         
-        print(f"特征列交集数量: {len(common_cols)}")
+        # 确保列顺序一致
+        common_cols = sorted(list(all_columns))
+        X_orig_train = X_orig_train[common_cols]
+        X_orig_test = X_orig_test[common_cols]
+        X_anon_train = X_anon_train[common_cols]
+        X_anon_test = X_anon_test[common_cols]
+        
+        print(f"特征列数量: {len(common_cols)}")
     except Exception as e:
-        if 'X_anon' not in locals():
-            # 仅评估原始数据
-            common_cols = X_orig.columns.tolist()
-            X_orig = X_orig[common_cols]
-        else:
-            print(f"特征列交集处理错误: {str(e)}")
-            results.append({
-                'metric': 'mlp',
-                'dataset': 'Both',
-                'accuracy': None,
-                'f1_score': None,
-                'precision': None,
-                'error': str(e)
-            })
-            return results
+        print(f"特征列对齐处理错误: {str(e)}")
+        results.append({
+            'metric': 'mlp',
+            'dataset': 'Both',
+            'accuracy': None,
+            'f1_score': None,
+            'precision': None,
+            'error': str(e)
+        })
+        return results
 
     # 评估原始数据
     try:
-        X_train, X_test, y_train, y_test = train_test_split(X_orig, y_orig, test_size=0.3, random_state=42)
-        
         # 构建MLP分类器，配置合适的参数
         mlp = MLPClassifier(
             hidden_layer_sizes=(100, 50),  # 两个隐藏层
@@ -1438,19 +1506,19 @@ def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_colu
         ])
         
         print(f"开始训练原始数据MLP模型... ({time.time() - start_time:.1f}秒)")
-        pipeline.fit(X_train, y_train)
-        y_pred_orig = pipeline.predict(X_test)
+        pipeline.fit(X_orig_train, y_orig_train)
+        y_pred_orig = pipeline.predict(X_orig_test)
         
         # 确保计算指标时数据类型兼容
-        accuracy = accuracy_score(y_test, y_pred_orig)
+        accuracy = accuracy_score(y_orig_test, y_pred_orig)
         
         # 检查y_test的类型是否适合计算F1和精确度
-        if len(np.unique(y_test)) < 2:
+        if len(np.unique(y_orig_test)) < 2:
             print("警告: 测试集中类别数少于2，无法正确计算F1和精确度")
             f1 = precision = 0.0
         else:
-            f1 = f1_score(y_test, y_pred_orig, average='macro', zero_division=0)
-            precision = precision_score(y_test, y_pred_orig, average='macro', zero_division=0)
+            f1 = f1_score(y_orig_test, y_pred_orig, average='macro', zero_division=0)
+            precision = precision_score(y_orig_test, y_pred_orig, average='macro', zero_division=0)
         
         results.append({
             'metric': 'mlp',
@@ -1475,66 +1543,63 @@ def evaluate_mlp_quality(original_df, anonymized_df, feature_columns, label_colu
             'error': str(e)
         })
 
-    # 评估匿名数据（如果成功预处理）
-    if 'X_anon' in locals() and 'y_anon' in locals():
-        try:
-            X_train_an, X_test_an, y_train_an, y_test_an = train_test_split(X_anon, y_anon, test_size=0.3, random_state=42)
-            
-            # 匿名数据使用新的管道实例
-            pipeline_anon = Pipeline([
-                ('imputer', SimpleImputer(strategy='mean')),
-                ('scaler', StandardScaler()),
-                ('mlp', MLPClassifier(
-                    hidden_layer_sizes=(100, 50),
-                    activation='relu',
-                    solver='adam',
-                    alpha=0.0001,
-                    batch_size='auto',
-                    learning_rate='adaptive',
-                    max_iter=300,
-                    early_stopping=True,
-                    validation_fraction=0.1,
-                    n_iter_no_change=10,
-                    random_state=42
-                ))
-            ])
-            
-            print(f"开始训练匿名数据MLP模型... ({time.time() - start_time:.1f}秒)")
-            pipeline_anon.fit(X_train_an, y_train_an)
-            y_pred_an = pipeline_anon.predict(X_test_an)
-            
-            # 同样确保计算指标时数据类型兼容
-            accuracy_an = accuracy_score(y_test_an, y_pred_an)
-            
-            if len(np.unique(y_test_an)) < 2:
-                print("警告: 匿名测试集中类别数少于2，无法正确计算F1和精确度")
-                f1_an = precision_an = 0.0
-            else:
-                f1_an = f1_score(y_test_an, y_pred_an, average='macro', zero_division=0)
-                precision_an = precision_score(y_test_an, y_pred_an, average='macro', zero_division=0)
-            
-            results.append({
-                'metric': 'mlp',
-                'dataset': 'Anonymized',
-                'accuracy': round(accuracy_an, 4),
-                'f1_score': round(f1_an, 4),
-                'precision': round(precision_an, 4)
-            })
-            
-            print(f"匿名数据评估完成，准确率: {accuracy_an:.4f} ({time.time() - start_time:.1f}秒)")
+    # 评估匿名数据
+    try:
+        # 匿名数据使用新的管道实例
+        pipeline_anon = Pipeline([
+            ('imputer', SimpleImputer(strategy='mean')),
+            ('scaler', StandardScaler()),
+            ('mlp', MLPClassifier(
+                hidden_layer_sizes=(100, 50),
+                activation='relu',
+                solver='adam',
+                alpha=0.0001,
+                batch_size='auto',
+                learning_rate='adaptive',
+                max_iter=300,
+                early_stopping=True,
+                validation_fraction=0.1,
+                n_iter_no_change=10,
+                random_state=42
+            ))
+        ])
         
-        except Exception as e:
-            print(f"匿名数据MLP评估失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            results.append({
-                'metric': 'mlp',
-                'dataset': 'Anonymized',
-                'accuracy': None,
-                'f1_score': None,
-                'precision': None,
-                'error': str(e)
-            })
+        print(f"开始训练匿名数据MLP模型... ({time.time() - start_time:.1f}秒)")
+        pipeline_anon.fit(X_anon_train, y_anon_train)
+        y_pred_an = pipeline_anon.predict(X_anon_test)
+        
+        # 同样确保计算指标时数据类型兼容
+        accuracy_an = accuracy_score(y_anon_test, y_pred_an)
+        
+        if len(np.unique(y_anon_test)) < 2:
+            print("警告: 匿名测试集中类别数少于2，无法正确计算F1和精确度")
+            f1_an = precision_an = 0.0
+        else:
+            f1_an = f1_score(y_anon_test, y_pred_an, average='macro', zero_division=0)
+            precision_an = precision_score(y_anon_test, y_pred_an, average='macro', zero_division=0)
+        
+        results.append({
+            'metric': 'mlp',
+            'dataset': 'Anonymized',
+            'accuracy': round(accuracy_an, 4),
+            'f1_score': round(f1_an, 4),
+            'precision': round(precision_an, 4)
+        })
+        
+        print(f"匿名数据评估完成，准确率: {accuracy_an:.4f} ({time.time() - start_time:.1f}秒)")
+    
+    except Exception as e:
+        print(f"匿名数据MLP评估失败: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        results.append({
+            'metric': 'mlp',
+            'dataset': 'Anonymized',
+            'accuracy': None,
+            'f1_score': None,
+            'precision': None,
+            'error': str(e)
+        })
     
     total_time = time.time() - start_time
     print(f"MLP评估完成，总耗时: {total_time:.1f}秒")
@@ -1736,112 +1801,210 @@ def preprocess_column(column, default_numeric=0, default_date=0):
     return column.apply(lambda x: parse_range(x, default_value=default_numeric))
 
 @bp.route('/evaluation', methods=['POST']) 
-def data_quality_evaluation():     
-    if 'original_file' not in request.files or 'anonymized_file' not in request.files:         
-        return jsonify({'error': '必须同时上传原始文件和匿名化文件'}), 400      
+def data_quality_evaluation():
+    # 获取用户选择的指标
+    metrics = request.form.get('metrics', 'mean,median,variance').split(',')
     
-    original_file = request.files['original_file']     
-    anonymized_file = request.files['anonymized_file']     
-    columns_to_compare = request.form.get('columns')
-    label_column = request.form.get('label')      
-    metrics = request.form.get('metrics', 'mean,median,variance').split(',')      
-    
-    if not columns_to_compare:         
-        return jsonify({'error': '必须指定用于比较的列'}), 400      
-    
-    columns_to_compare = columns_to_compare.split(',')      
-    
-    # 文件扩展名校验     
-    if not allowed_file(original_file.filename) or not allowed_file(anonymized_file.filename):         
-        return jsonify({'error': '只支持 .csv 或 .tsv 文件格式'}), 400      
-    
-    try:         
-        original_df = pd.read_csv(original_file, on_bad_lines='skip')         
-        anonymized_df = pd.read_csv(anonymized_file, on_bad_lines='skip')     
-    except Exception as e:         
-        return jsonify({'error': f'文件读取失败，请检查格式：{str(e)}'}), 400      
-    
-    # 检查列是否存在     
-    missing_cols = [col for col in columns_to_compare if col not in original_df.columns or col not in anonymized_df.columns]     
-    if missing_cols:         
-        return jsonify({'error': f'以下列在文件中不存在: {missing_cols}'}), 400
+    # 确定是否包含机器学习评估方法
+    ml_metrics = ['random-forest', 'svm', 'mlp']
+    is_ml_evaluation = any(m in ml_metrics for m in metrics)
     
     # 区分数值型统计方法和文本型统计方法
     numeric_metrics = ['mean', 'median', 'variance', 'wasserstein', 'ks_similarity', 'pearson', 'spearman']
     text_metrics = ['js-divergence', 'mutual-information']
-    ml_metrics = ['random-forest', 'svm', 'mlp']
     unsupervised_metrics = ['unsupervised-quality']
+    
+    # 根据评估类型确定所需文件
+    if is_ml_evaluation:
+        # 机器学习评估需要四个文件
+        required_files = ['original_train_file', 'original_test_file', 
+                          'anonymized_train_file', 'anonymized_test_file']
+        
+        # 检查是否提供了所有必要文件
+        for file_key in required_files:
+            if file_key not in request.files:
+                return jsonify({'error': f'机器学习评估方法需要提供四个文件: 原始训练集、原始测试集、匿名化训练集和匿名化测试集。缺少 {file_key}'}), 400
+            
+        # 获取文件对象
+        original_train_file = request.files['original_train_file']
+        original_test_file = request.files['original_test_file']
+        anonymized_train_file = request.files['anonymized_train_file']
+        anonymized_test_file = request.files['anonymized_test_file']
+        
+        # 检查文件扩展名
+        for file in [original_train_file, original_test_file, anonymized_train_file, anonymized_test_file]:
+            if not allowed_file(file.filename):
+                return jsonify({'error': '只支持 .csv 或 .tsv 文件格式'}), 400
+        
+        # 读取文件
+        try:
+            original_train_df = pd.read_csv(original_train_file, on_bad_lines='skip')
+            original_test_df = pd.read_csv(original_test_file, on_bad_lines='skip')
+            anonymized_train_df = pd.read_csv(anonymized_train_file, on_bad_lines='skip')
+            anonymized_test_df = pd.read_csv(anonymized_test_file, on_bad_lines='skip')
+            
+            # 合并训练和测试集，用于非ML评估
+            original_df = pd.concat([original_train_df, original_test_df], ignore_index=True)
+            anonymized_df = pd.concat([anonymized_train_df, anonymized_test_df], ignore_index=True)
+        except Exception as e:
+            return jsonify({'error': f'文件读取失败，请检查格式：{str(e)}'}), 400
+    else:
+        # 非机器学习评估只需要两个文件
+        if 'original_file' not in request.files or 'anonymized_file' not in request.files:
+            return jsonify({'error': '必须同时上传原始文件和匿名化文件'}), 400
+        
+        original_file = request.files['original_file']
+        anonymized_file = request.files['anonymized_file']
+        
+        # 检查文件扩展名
+        if not allowed_file(original_file.filename) or not allowed_file(anonymized_file.filename):
+            return jsonify({'error': '只支持 .csv 或 .tsv 文件格式'}), 400
+        
+        # 读取文件
+        try:
+            original_df = pd.read_csv(original_file, on_bad_lines='skip')
+            anonymized_df = pd.read_csv(anonymized_file, on_bad_lines='skip')
+        except Exception as e:
+            return jsonify({'error': f'文件读取失败，请检查格式：{str(e)}'}), 400
+    
+    columns_to_compare = request.form.get('columns')
+    label_column = request.form.get('label')
+    
+    if not columns_to_compare:
+        return jsonify({'error': '必须指定用于比较的列'}), 400
+    
+    columns_to_compare = columns_to_compare.split(',')
+    
+    # 检查列是否存在
+    if is_ml_evaluation:
+        # 检查所有四个数据集中的列
+        for df_name, df in [('原始训练集', original_train_df), ('原始测试集', original_test_df), 
+                            ('匿名化训练集', anonymized_train_df), ('匿名化测试集', anonymized_test_df)]:
+            missing_cols = [col for col in columns_to_compare if col not in df.columns]
+            if missing_cols:
+                return jsonify({'error': f'{df_name}中以下列不存在: {missing_cols}'}), 400
+            
+            # 检查标签列
+            if label_column and label_column not in df.columns:
+                return jsonify({'error': f'{df_name}中标签列 {label_column} 不存在'}), 400
+    else:
+        # 只检查两个数据集中的列
+        missing_cols = [col for col in columns_to_compare if col not in original_df.columns or col not in anonymized_df.columns]
+        if missing_cols:
+            return jsonify({'error': f'以下列在文件中不存在: {missing_cols}'}), 400
+    
     # 如果选择了数值统计方法，先验证数值类型，对非数值类型尝试区间处理
     numeric_columns_to_compare = columns_to_compare.copy()
     
-    if any(metric in metrics for metric in numeric_metrics+ ml_metrics+ unsupervised_metrics):
+    if any(metric in metrics for metric in numeric_metrics + ml_metrics + unsupervised_metrics):
         # 收集非数值类型的列
-        non_numeric_cols = [
-            col for col in columns_to_compare
-            if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
-        ]
+        if is_ml_evaluation:
+            # 检查所有四个数据集
+            non_numeric_cols = []
+            for df in [original_train_df, original_test_df, anonymized_train_df, anonymized_test_df]:
+                for col in columns_to_compare:
+                    if not pd.api.types.is_numeric_dtype(df[col]) and col not in non_numeric_cols:
+                        non_numeric_cols.append(col)
+        else:
+            # 只检查两个数据集
+            non_numeric_cols = [
+                col for col in columns_to_compare
+                if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
+            ]
         
-        # 对非数值类型的列尝试预处理
         # 对非数值类型的列尝试预处理
         for col in non_numeric_cols:
             try:
-                # 预处理并生成新列
+                # 生成处理后的列名
                 processed_col_name = col + '_processed'
-                original_df[processed_col_name] = preprocess_column(original_df[col])
-                anonymized_df[processed_col_name] = preprocess_column(anonymized_df[col])
-
-                # 强制转换为 float 并填充任何仍然存在的NaN值
-                original_df[processed_col_name] = pd.to_numeric(original_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
-                anonymized_df[processed_col_name] = pd.to_numeric(anonymized_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
-
+                
+                # 根据评估类型处理相应的数据集
+                if is_ml_evaluation:
+                    # 处理四个数据集
+                    original_train_df[processed_col_name] = preprocess_column(original_train_df[col])
+                    original_train_df[processed_col_name] = pd.to_numeric(original_train_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
+                    
+                    original_test_df[processed_col_name] = preprocess_column(original_test_df[col])
+                    original_test_df[processed_col_name] = pd.to_numeric(original_test_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
+                    
+                    anonymized_train_df[processed_col_name] = preprocess_column(anonymized_train_df[col])
+                    anonymized_train_df[processed_col_name] = pd.to_numeric(anonymized_train_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
+                    
+                    anonymized_test_df[processed_col_name] = preprocess_column(anonymized_test_df[col])
+                    anonymized_test_df[processed_col_name] = pd.to_numeric(anonymized_test_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
+                else:
+                    # 处理两个数据集
+                    original_df[processed_col_name] = preprocess_column(original_df[col])
+                    original_df[processed_col_name] = pd.to_numeric(original_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
+                    
+                    anonymized_df[processed_col_name] = preprocess_column(anonymized_df[col])
+                    anonymized_df[processed_col_name] = pd.to_numeric(anonymized_df[processed_col_name], errors='coerce').fillna(0.0).astype(float)
+                
                 # 更新列名用于后续比较
                 numeric_columns_to_compare = [processed_col_name if c == col else c for c in numeric_columns_to_compare]
             except Exception as e:
                 return jsonify({'error': f'数据预处理失败: {col}, 错误: {str(e)}'}), 400
-
         
         # 再次验证是否有非数值类型的列
-        numeric_check_failed = [
-            col for col in numeric_columns_to_compare
-            if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
-        ]
+        if is_ml_evaluation:
+            numeric_check_failed = []
+            for df in [original_train_df, original_test_df, anonymized_train_df, anonymized_test_df]:
+                for col in numeric_columns_to_compare:
+                    if not pd.api.types.is_numeric_dtype(df[col]) and col not in numeric_check_failed:
+                        numeric_check_failed.append(col)
+        else:
+            numeric_check_failed = [
+                col for col in numeric_columns_to_compare
+                if not pd.api.types.is_numeric_dtype(original_df[col]) or not pd.api.types.is_numeric_dtype(anonymized_df[col])
+            ]
         
         if numeric_check_failed and any(metric in metrics for metric in numeric_metrics):
-            return jsonify({'error': f'以下列不是数值类型，无法计算统计指标: {numeric_check_failed}'}), 400      
+            return jsonify({'error': f'以下列不是数值类型，无法计算统计指标: {numeric_check_failed}'}), 400
     
-    results = []     
-    # 处理数值型指标
-    if 'mean' in metrics:         
-        results.extend(calculate_mean_diff(original_df, anonymized_df, numeric_columns_to_compare))     
-    if 'median' in metrics:         
-        results.extend(calculate_median_diff(original_df, anonymized_df, numeric_columns_to_compare))     
-    if 'variance' in metrics:         
-        results.extend(calculate_variance_diff(original_df, anonymized_df, numeric_columns_to_compare))  
-    if 'wasserstein' in metrics:
-        results.extend(calculate_wasserstein_distance(original_df, anonymized_df, numeric_columns_to_compare))
-    if 'ks_similarity' in metrics:
-        results.extend(calculate_ks_similarity(original_df, anonymized_df, numeric_columns_to_compare))
-    if 'pearson' in metrics:
-        results.extend(calculate_pearson(original_df, anonymized_df, numeric_columns_to_compare))
-    if 'spearman' in metrics:
-        results.extend(calculate_spearman(original_df, anonymized_df, numeric_columns_to_compare))
-
+    results = []
     
-        # --- 文本指标 ---
-    if any(m in text_metrics for m in metrics):
-        if 'js-divergence' in metrics:
-            results.extend(calculate_js_divergence(original_df, anonymized_df, columns_to_compare))
-        if 'mutual-information' in metrics:
-            results.extend(calculate_mutual_information(original_df, anonymized_df, columns_to_compare))
-
-        # --- 机器学习指标（ML类）---
-    if any(m in ml_metrics for m in metrics):
+    # 处理普通统计指标（非ML指标）
+    if any(m in metrics for m in numeric_metrics + text_metrics + unsupervised_metrics):
+        # 处理数值型指标
+        if 'mean' in metrics:
+            results.extend(calculate_mean_diff(original_df, anonymized_df, numeric_columns_to_compare))
+        if 'median' in metrics:
+            results.extend(calculate_median_diff(original_df, anonymized_df, numeric_columns_to_compare))
+        if 'variance' in metrics:
+            results.extend(calculate_variance_diff(original_df, anonymized_df, numeric_columns_to_compare))
+        if 'wasserstein' in metrics:
+            results.extend(calculate_wasserstein_distance(original_df, anonymized_df, numeric_columns_to_compare))
+        if 'ks_similarity' in metrics:
+            results.extend(calculate_ks_similarity(original_df, anonymized_df, numeric_columns_to_compare))
+        if 'pearson' in metrics:
+            results.extend(calculate_pearson(original_df, anonymized_df, numeric_columns_to_compare))
+        if 'spearman' in metrics:
+            results.extend(calculate_spearman(original_df, anonymized_df, numeric_columns_to_compare))
+    
+        # 处理文本指标
+        if any(m in text_metrics for m in metrics):
+            if 'js-divergence' in metrics:
+                results.extend(calculate_js_divergence(original_df, anonymized_df, columns_to_compare))
+            if 'mutual-information' in metrics:
+                results.extend(calculate_mutual_information(original_df, anonymized_df, columns_to_compare))
+    
+        # 处理无监督学习指标
+        if any(m in unsupervised_metrics for m in metrics):
+            try:
+                results.extend(evaluate_unsupervised_quality(original_df, anonymized_df, feature_columns=numeric_columns_to_compare, k_neighbors=5, n_clusters=5))
+            except Exception as e:
+                return jsonify({'error': f'unsupervised-quality 评估失败: {str(e)}'}), 400
+    
+    # 处理机器学习评估指标
+    # 在evaluation路由函数中处理机器学习评估部分
+    if is_ml_evaluation:
         if 'random-forest' in metrics:
             try:
                 results.extend(
                     evaluate_random_forest_quality(
-                        original_df, anonymized_df,
-                        feature_columns=numeric_columns_to_compare,  # 注意如果有经过预处理
+                        original_train_df, original_test_df,
+                        anonymized_train_df, anonymized_test_df,
+                        feature_columns=numeric_columns_to_compare,
                         label_column=label_column
                     )
                 )
@@ -1852,7 +2015,8 @@ def data_quality_evaluation():
             try:
                 results.extend(
                     evaluate_svm_quality(
-                        original_df, anonymized_df,
+                        original_train_df, original_test_df,
+                        anonymized_train_df, anonymized_test_df,
                         feature_columns=numeric_columns_to_compare,
                         label_column=label_column
                     )
@@ -1864,26 +2028,20 @@ def data_quality_evaluation():
             try:
                 results.extend(
                     evaluate_mlp_quality(
-                        original_df, anonymized_df,
+                        original_train_df, original_test_df,
+                        anonymized_train_df, anonymized_test_df,
                         feature_columns=numeric_columns_to_compare,
                         label_column=label_column
                     )
                 )
             except Exception as e:
                 return jsonify({'error': f'MLP 评估失败: {str(e)}'}), 400
-            
-    # --- 无监督学习指标 ---
-    if any(m in unsupervised_metrics for m in metrics):
-        try:
-            results.extend(evaluate_unsupervised_quality(original_df, anonymized_df, feature_columns=numeric_columns_to_compare, k_neighbors=5, n_clusters=5))
-        except Exception as e:
-            return jsonify({'error': f'unsupervised-quality 评估失败: {str(e)}'}), 400
-
         
-    result_id = str(uuid.uuid4())     
-    quality_results[result_id] = results      
-    
-    return jsonify({'result_id': result_id, 'summary': results})
+        # 生成结果ID并保存结果
+        result_id = str(uuid.uuid4())
+        quality_results[result_id] = results
+        
+        return jsonify({'result_id': result_id, 'summary': results})
 
 # 获取评估后结果
 @bp.route('/quality/result/<result_id>', methods=['GET'])
@@ -1924,6 +2082,13 @@ def anonymize():
     if file.filename == '':
         return jsonify({'error': 'No selected file'}), 400
 
+    # 获取数据集划分比例
+    train_ratio = request.form.get('train_ratio', None)
+    if train_ratio:
+        train_ratio = float(train_ratio)
+        if train_ratio <= 0 or train_ratio >= 1:
+            return jsonify({'error': 'Train ratio must be between 0 and 1'}), 400
+
     privacy_model = request.form.get('privacy_model', 'k-anonymity')
     k_value = request.form.get('k', None)
     if k_value:
@@ -1957,29 +2122,24 @@ def anonymize():
     if beta_value:
         beta_value = float(beta_value)
 
-    # Add delta_disclosure parameter
     delta_disclosure = request.form.get('delta_disclosure', None)
     if delta_disclosure:
         delta_disclosure = float(delta_disclosure)
 
-    # Add p-sensitivity parameter
     p_value = request.form.get('p', None)
     if p_value:
         p_value = int(p_value)
 
-    # Add c-value parameter for (c,k)-Safety
     c_value = request.form.get('c', None)
     if c_value:
         c_value = float(c_value)
 
-    # Add delta parameter for differential privacy
     delta = request.form.get('delta', None)
     if delta:
         delta = float(delta)
     else:
         delta = 1e-6  # Default delta value for differential privacy
 
-    # Add budget parameter for differential privacy
     budget = request.form.get('budget', None)
     if budget:
         budget = float(budget)
@@ -1992,7 +2152,17 @@ def anonymize():
     hierarchy_rules = json.loads(request.form.get('hierarchy_rules', '{}'))
     
     file_path = os.path.join(bp.root_path, 'uploads', file.filename)
-    suppression_threshold = float(request.form.get('suppression_threshold', '0.3'))  # 抑制阈值
+    output_dir = os.path.join(bp.root_path, 'results')
+    
+    # 确保输出目录存在
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
+    
+    # 获取文件名（不包含扩展名）和扩展名
+    file_name = os.path.splitext(file.filename)[0]
+    file_ext = os.path.splitext(file.filename)[1]
+    
+    suppression_threshold = float(request.form.get('suppression_threshold', '0.3'))
     file.save(file_path)
     dataPd = read_file(file_path)
 
@@ -2001,86 +2171,208 @@ def anonymize():
             return jsonify({'error': f"Column '{qi}' does not exist in the file."}), 400
 
     try:
-        if privacy_model == 'k-anonymity':
-            resultPd = apply_k_anonymity_r(dataPd, quasi_identifiers, k_value, hierarchy_rules,suppression_threshold)
-            if resultPd is None:
-                raise ValueError("Anonymization process returned no result.")
-            return resultPd.to_json(orient='records')
+        # 生成时间戳，用于确保文件名唯一
+        timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+        result_files = {}
         
-        elif privacy_model == 'l-diversity':
-            resultPd = apply_l_diversity_r(dataPd, quasi_identifiers, sensitive_column, k_value,l_value, hierarchy_rules,suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply l-diversity.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 't-closeness':
-            resultPd = apply_t_closeness_r(dataPd, quasi_identifiers, sensitive_column, k_value, t_value, hierarchy_rules,suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply t-closeness.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 'km-anonymity':
-            resultPd = apply_km_anonymity_r(dataPd, quasi_identifiers, sensitive_column,k_value, m_value, hierarchy_rules,suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply km-closeness.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 'delta-presence':
-            if delta_min is None or delta_max is None:
-                return jsonify({'error': 'Both delta_min and delta_max are required for delta-presence'}), 400
-            resultPd = apply_delta_presence(dataPd, quasi_identifiers, sensitive_column[0], delta_min, delta_max, hierarchy_rules, suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply delta-presence.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 'beta-likeness':
-            if beta_value is None:
-                return jsonify({'error': 'Beta value is required for beta-likeness'}), 400
-            resultPd = apply_beta_likeness_r(dataPd, quasi_identifiers, sensitive_column, beta_value, hierarchy_rules, suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply beta-likeness.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 'delta-disclosure':
-            if delta_disclosure is None:
-                return jsonify({'error': 'Delta value is required for δ-disclosure privacy'}), 400
-            resultPd = apply_delta_disclosure(dataPd, quasi_identifiers, sensitive_column, delta_disclosure, hierarchy_rules, suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply δ-disclosure privacy.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 'p-sensitivity':
-            if p_value is None:
-                return jsonify({'error': 'P value is required for p-sensitivity'}), 400
-            resultPd = apply_p_sensitivity(dataPd, quasi_identifiers, sensitive_column, p_value, hierarchy_rules, suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply p-sensitivity.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 'ck-safety':
-            if c_value is None:
-                return jsonify({'error': 'C value is required for (c,k)-Safety'}), 400
-            resultPd = apply_ck_safety(dataPd, quasi_identifiers, sensitive_column, 
-                                     c_value, k_value, hierarchy_rules, suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply (c,k)-Safety.'}), 400
-            return resultPd.to_json(orient='records')
-        
-        elif privacy_model == 'differential_privacy':
-            if not epsilon:
-                return jsonify({'error': 'Epsilon value is required for differential privacy'}), 400
+        # 如果提供了训练集比例，则进行数据集划分
+        if train_ratio:
+            # 随机划分数据集
+            train_data, test_data = train_test_split(dataPd, train_size=train_ratio, random_state=42)
             
-            resultPd = apply_differential_privacy(dataPd, epsilon, delta, quasi_identifiers, 
-                                                sensitive_column, hierarchy_rules, budget, suppression_threshold)
-            if resultPd is None:
-                return jsonify({'error': 'Failed to apply differential privacy.'}), 400
+            # 保存原始训练集和测试集
+            original_train_file = f"{file_name}_original_train_{timestamp}{file_ext}"
+            original_train_path = os.path.join(output_dir, original_train_file)
+            save_file(train_data, original_train_path)
+            result_files['original_train'] = original_train_file
             
-            return resultPd.to_json(orient='records')
+            original_test_file = f"{file_name}_original_test_{timestamp}{file_ext}"
+            original_test_path = os.path.join(output_dir, original_test_file)
+            save_file(test_data, original_test_path)
+            result_files['original_test'] = original_test_file
+            
+            # 对训练集进行匿名化处理
+            train_anonymized = anonymize_data(train_data, privacy_model, quasi_identifiers, sensitive_column, 
+                                             k_value, l_value, t_value, m_value, delta_min, delta_max, 
+                                             epsilon, beta_value, delta_disclosure, p_value, c_value, 
+                                             delta, budget, hierarchy_rules, suppression_threshold)
+            
+            if train_anonymized is None:
+                return jsonify({'error': 'Failed to anonymize training data.'}), 400
+            
+            # 保存匿名化训练集
+            anonymized_train_file = f"{file_name}_{privacy_model}_train_{timestamp}{file_ext}"
+            anonymized_train_path = os.path.join(output_dir, anonymized_train_file)
+            save_file(train_anonymized, anonymized_train_path)
+            result_files['anonymized_train'] = anonymized_train_file
+            
+            # 对测试集进行匿名化处理
+            test_anonymized = anonymize_data(test_data, privacy_model, quasi_identifiers, sensitive_column, 
+                                           k_value, l_value, t_value, m_value, delta_min, delta_max, 
+                                           epsilon, beta_value, delta_disclosure, p_value, c_value, 
+                                           delta, budget, hierarchy_rules, suppression_threshold)
+            
+            if test_anonymized is None:
+                return jsonify({'error': 'Failed to anonymize test data.'}), 400
+            
+            # 保存匿名化测试集
+            anonymized_test_file = f"{file_name}_{privacy_model}_test_{timestamp}{file_ext}"
+            anonymized_test_path = os.path.join(output_dir, anonymized_test_file)
+            save_file(test_anonymized, anonymized_test_path)
+            result_files['anonymized_test'] = anonymized_test_file
+            
+            # 返回包含文件路径的JSON结果
+            return jsonify({
+                'status': 'success',
+                'files': result_files,
+                'message': f'Files saved in results directory: {", ".join(result_files.values())}'
+            })
         
         else:
-            return jsonify({'error': f"Unsupported privacy model: {privacy_model}"}), 400
+            # 如果没有提供划分比例，则直接对整个数据集进行匿名化
+            anonymized_data = anonymize_data(dataPd, privacy_model, quasi_identifiers, sensitive_column, 
+                                           k_value, l_value, t_value, m_value, delta_min, delta_max, 
+                                           epsilon, beta_value, delta_disclosure, p_value, c_value, 
+                                           delta, budget, hierarchy_rules, suppression_threshold)
+            
+            if anonymized_data is None:
+                return jsonify({'error': 'Failed to anonymize data.'}), 400
+            
+            # 保存匿名化数据
+            anonymized_file = f"{file_name}_{privacy_model}_{timestamp}{file_ext}"
+            anonymized_path = os.path.join(output_dir, anonymized_file)
+            save_file(anonymized_data, anonymized_path)
+            result_files['anonymized'] = anonymized_file
+            
+            # 返回包含文件路径的JSON结果
+            return jsonify({
+                'status': 'success',
+                'files': result_files,
+                'message': f'File saved in results directory: {anonymized_file}'
+            })
 
     except Exception as e:
         import traceback
         traceback.print_exc()
-        return jsonify({'error': f"Unable to convert: {str(e)}"}), 400
+        return jsonify({'error': f"Unable to process: {str(e)}"}), 400
+    
+# 添加匿名化文件下载接口
+@bp.route('/download/<filename>', methods=['GET'])
+def download_file(filename):
+    """
+    提供结果文件的下载
+    
+    Args:
+        filename: 要下载的文件名
+    """
+    try:
+        # 检查文件是否存在于results目录
+        output_dir = os.path.join(bp.root_path, 'results')
+        file_path = os.path.join(output_dir, filename)
+        
+        if not os.path.exists(file_path):
+            return jsonify({'error': f'File {filename} not found'}), 404
+        
+        # 返回文件
+        return send_file(
+            file_path, 
+            as_attachment=True,
+            download_name=filename
+        )
+    except Exception as e:
+        return jsonify({'error': f'Error downloading file: {str(e)}'}), 500
+
+# 辅助函数：根据文件扩展名保存数据
+def save_file(data, file_path):
+    """
+    根据文件扩展名保存数据到指定路径
+    
+    Args:
+        data: 要保存的数据（DataFrame）
+        file_path: 文件保存路径
+    """
+    file_ext = os.path.splitext(file_path)[1].lower()
+    
+    if file_ext == '.csv':
+        data.to_csv(file_path, index=False)
+    elif file_ext in ['.xls', '.xlsx']:
+        data.to_excel(file_path, index=False)
+    elif file_ext == '.json':
+        data.to_json(file_path, orient='records')
+    else:
+        # 默认保存为CSV
+        data.to_csv(file_path, index=False)
+
+
+
+# 提取匿名化逻辑到独立函数，便于复用
+def anonymize_data(data, privacy_model, quasi_identifiers, sensitive_column, k_value=None, l_value=None, 
+                  t_value=None, m_value=None, delta_min=None, delta_max=None, epsilon=None, beta_value=None, 
+                  delta_disclosure=None, p_value=None, c_value=None, delta=None, budget=None, 
+                  hierarchy_rules=None, suppression_threshold=0.3):
+    """
+    根据指定的隐私模型对数据进行匿名化处理
+    
+    Args:
+        data: 要匿名化的数据集
+        privacy_model: 使用的隐私模型名称
+        quasi_identifiers: 准标识符列表
+        sensitive_column: 敏感属性列表
+        其他参数: 各隐私模型所需的参数
+        
+    Returns:
+        匿名化后的数据集或None（处理失败）
+    """
+    if privacy_model == 'k-anonymity':
+        return apply_k_anonymity_r(data, quasi_identifiers, k_value, hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'l-diversity':
+        return apply_l_diversity_r(data, quasi_identifiers, sensitive_column, k_value, l_value, 
+                                 hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 't-closeness':
+        return apply_t_closeness_r(data, quasi_identifiers, sensitive_column, k_value, t_value, 
+                                 hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'km-anonymity':
+        return apply_km_anonymity_r(data, quasi_identifiers, sensitive_column, k_value, m_value, 
+                                  hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'delta-presence':
+        if delta_min is None or delta_max is None:
+            return None
+        return apply_delta_presence(data, quasi_identifiers, sensitive_column[0], delta_min, delta_max, 
+                                  hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'beta-likeness':
+        if beta_value is None:
+            return None
+        return apply_beta_likeness_r(data, quasi_identifiers, sensitive_column, beta_value, 
+                                   hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'delta-disclosure':
+        if delta_disclosure is None:
+            return None
+        return apply_delta_disclosure(data, quasi_identifiers, sensitive_column, delta_disclosure, 
+                                    hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'p-sensitivity':
+        if p_value is None:
+            return None
+        return apply_p_sensitivity(data, quasi_identifiers, sensitive_column, p_value, 
+                                 hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'ck-safety':
+        if c_value is None:
+            return None
+        return apply_ck_safety(data, quasi_identifiers, sensitive_column, c_value, k_value, 
+                             hierarchy_rules, suppression_threshold)
+    
+    elif privacy_model == 'differential_privacy':
+        if not epsilon:
+            return None
+        return apply_differential_privacy(data, epsilon, delta, quasi_identifiers, sensitive_column, 
+                                        hierarchy_rules, budget, suppression_threshold)
+    
+    else:
+        return None

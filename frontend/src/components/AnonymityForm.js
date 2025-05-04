@@ -7,6 +7,8 @@ import {
   Typography,
   message,
   Tooltip,
+  Switch,
+  Divider,
 } from "antd";
 import AppHeader from "./Header";
 import React, { useState } from "react";
@@ -17,6 +19,7 @@ const { Content } = Layout;
 
 const AnonymityForm = ({ file }) => {
   const [algorithm, setAlgorithm] = useState("k-anonymity");
+  const [splitData, setSplitData] = useState(false);
   const location = useLocation();
   const { identifier, quasiIdentifiers, sensitiveColumn, hierarchyRules, csvHeaders } =
     location.state || {
@@ -32,16 +35,38 @@ const AnonymityForm = ({ file }) => {
     setAlgorithm(value);
   };
 
-  const downloadCSV = (data, filename) => {
-    const blob = new Blob([data], { type: "text/csv;charset=utf-8;" });
-    const link = document.createElement("a");
-    link.href = URL.createObjectURL(blob);
-    link.setAttribute("download", filename);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+  const onSplitDataChange = (checked) => {
+    setSplitData(checked);
   };
 
+  const downloadFiles = (files) => {
+    // 多个文件下载辅助函数
+    Object.entries(files).forEach(([key, filename]) => {
+      fetch(`http://127.0.0.1:5000/api/download/${filename}`, {
+        method: "GET",
+        credentials: "include"
+      })
+      .then(response => {
+        if (response.ok) {
+          return response.blob();
+        }
+        throw new Error(`Failed to download ${filename}`);
+      })
+      .then(blob => {
+        const link = document.createElement("a");
+        link.href = URL.createObjectURL(blob);
+        link.setAttribute("download", filename);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      })
+      .catch(error => {
+        console.error(`Error downloading ${filename}:`, error);
+        message.error(`Failed to download ${filename}`);
+      });
+    });
+  };
+  
   const onFinish = async (values) => {
     if (!file) {
       message.error("No file selected. Please upload a file.");
@@ -69,24 +94,47 @@ const AnonymityForm = ({ file }) => {
     formData.append("e", values.epsilonValue || "");
     formData.append("delta", values.deltaValue || "");
     formData.append("budget", values.budgetValue || "");
+    
+    // 添加训练集划分比例参数
+    if (splitData && values.trainRatio) {
+      formData.append("train_ratio", values.trainRatio);
+    }
   
     try {
       const response = await fetch("http://127.0.0.1:5000/api/anonymize", {
         method: "POST",
         body: formData,
-        credentials: "include", // 确保 CORS 允许跨域请求
+        credentials: "include",
       });
   
       if (response.ok) {
         const result = await response.json();
-        console.log("Anonymized Data:", result);
-  
-        const header = Object.keys(result[0]).join(",") + "\n";
-        const rows = result.map((row) => Object.values(row).join(",")).join("\n");
-        const csvData = header + rows;
-  
-        downloadCSV(csvData, "anonymized_data.csv");
-        message.success("Data anonymization successful! CSV downloaded.");
+        console.log("Anonymization Result:", result);
+        
+        if (result.status === "success") {
+          // 处理返回的文件下载
+          if (result.files) {
+            downloadFiles(result.files);
+            message.success(result.message || "Data anonymization successful!");
+          } else {
+            message.error("No output files were generated.");
+          }
+        } else if (Array.isArray(result)) {
+          // 兼容旧版API返回格式
+          const header = Object.keys(result[0]).join(",") + "\n";
+          const rows = result.map((row) => Object.values(row).join(",")).join("\n");
+          const csvData = header + rows;
+          
+          const blob = new Blob([csvData], { type: "text/csv;charset=utf-8;" });
+          const link = document.createElement("a");
+          link.href = URL.createObjectURL(blob);
+          link.setAttribute("download", "anonymized_data.csv");
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          
+          message.success("Data anonymization successful! CSV downloaded.");
+        }
       } else {
         const error = await response.json();
         console.error(`Server Error: ${error.error}`);
@@ -122,13 +170,46 @@ const AnonymityForm = ({ file }) => {
               <Option value="t-closeness">T-closeness</Option>
               <Option value="km-anonymity">Km-anonymity</Option>
               <Option value="delta-presence">δ-Presence</Option>
-              <Option value="beta-likeness">β-Likeness</Option> {/* 添加 β-likeness */}
-              <Option value="delta-disclosure">δ-Disclosure</Option> {/* Add new option */}
+              <Option value="beta-likeness">β-Likeness</Option>
+              <Option value="delta-disclosure">δ-Disclosure</Option>
               <Option value="p-sensitivity">p-Sensitivity</Option>
               <Option value="ck-safety">(c,k)-Safety</Option>
               <Option value="differential_privacy">Differential Privacy</Option>
             </Select>
           </Form.Item>
+
+          {/* 添加数据集划分选项 */}
+          <Divider orientation="left">Dataset Split</Divider>
+          <Form.Item label="Split Dataset into Train/Test">
+            <Tooltip title="Enable to split the original dataset into training and test sets before anonymization">
+              <Switch checked={splitData} onChange={onSplitDataChange} />
+            </Tooltip>
+          </Form.Item>
+
+          {splitData && (
+            <Tooltip title="The proportion of data to use for training (0-1). The remaining data will be used for testing.">
+              <Form.Item
+                name="trainRatio"
+                label="Training Set Ratio"
+                rules={[
+                  {
+                    required: splitData,
+                    message: "Please input the training set ratio!",
+                  },
+                ]}
+              >
+                <InputNumber
+                  min={0.1}
+                  max={0.9}
+                  step={0.05}
+                  style={{ width: "100%" }}
+                  placeholder="Enter training set ratio (e.g., 0.7)"
+                />
+              </Form.Item>
+            </Tooltip>
+          )}
+
+          <Divider orientation="left">Algorithm Parameters</Divider>
 
           {(algorithm === "k-anonymity" ||
             algorithm === "l-diversity" ||
@@ -260,7 +341,7 @@ const AnonymityForm = ({ file }) => {
             </>
           )}
 
-          {algorithm === "beta-likeness" && ( // 添加 β-likeness 的表单项
+          {algorithm === "beta-likeness" && (
             <Tooltip title="The β value specifies the maximum allowed difference between the sensitive attribute distribution in equivalence classes and the global distribution.">
               <Form.Item
                 name="betaValue"

@@ -10,6 +10,9 @@ import {
   Checkbox,
   Table,
   Tabs,
+  Space,
+  Divider,
+  Alert
 } from "antd";
 import { UploadOutlined, DownloadOutlined } from "@ant-design/icons";
 import {
@@ -42,8 +45,16 @@ const mlMethods = ["random-forest", "svm", "mlp"];
 const unsupervisedMethods = ["unsupervised-quality"];
 
 const DataQualityEvaluation = () => {
+  // 基本文件上传状态
   const [originalFile, setOriginalFile] = useState(null);
   const [anonymizedFile, setAnonymizedFile] = useState(null);
+  
+  // ML文件上传状态
+  const [originalTrainFile, setOriginalTrainFile] = useState(null);
+  const [originalTestFile, setOriginalTestFile] = useState(null);
+  const [anonymizedTrainFile, setAnonymizedTrainFile] = useState(null);
+  const [anonymizedTestFile, setAnonymizedTestFile] = useState(null);
+  
   const [columnOptions, setColumnOptions] = useState([]);
   const [selectedColumns, setSelectedColumns] = useState([]);
   const [selectedStatisticalMethods, setSelectedStatisticalMethods] = useState([]);
@@ -52,6 +63,12 @@ const DataQualityEvaluation = () => {
   const [resultData, setResultData] = useState([]);
   const [resultId, setResultId] = useState(null);
 
+  // 检查是否包含ML方法
+  const isMLMethod = selectedStatisticalMethods.some((m) => mlMethods.includes(m));
+  const isTextMethod = selectedStatisticalMethods.some((m) => textMethods.includes(m));
+  const isUnsupervisedMethod = selectedStatisticalMethods.some((m) => unsupervisedMethods.includes(m));
+
+  // 处理常规文件上传
   const handleFileChange = (info, type) => {
     const fileList = info.fileList;
     const fileObj = fileList[fileList.length - 1]?.originFileObj;
@@ -63,15 +80,7 @@ const DataQualityEvaluation = () => {
 
     if (type === "original") {
       setOriginalFile(fileObj);
-
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        const text = e.target.result;
-        const firstLine = text.split("\n")[0];
-        const columns = firstLine.split(/,|\t/).map((c) => c.trim());
-        setColumnOptions(columns);
-      };
-      reader.readAsText(fileObj);
+      readColumns(fileObj);
     } else if (type === "anonymized") {
       setAnonymizedFile(fileObj);
     }
@@ -79,21 +88,89 @@ const DataQualityEvaluation = () => {
     message.success(`${info.file.name} uploaded successfully`);
   };
 
-  const handleEvaluate = async () => {
-    if (!originalFile || !anonymizedFile || selectedStatisticalMethods.length === 0 || selectedColumns.length === 0) {
-      message.error("请上传两个文件并选择列和评估方法！");
+  // 处理ML数据集文件上传
+  const handleMLFileChange = (info, type) => {
+    const fileList = info.fileList;
+    const fileObj = fileList[fileList.length - 1]?.originFileObj;
+
+    if (!fileObj) {
+      message.error("上传失败，文件未正确获取！");
       return;
     }
 
-    if (selectedStatisticalMethods.some((m) => mlMethods.includes(m)) && !labelColumn) {
-      message.error("请选择一个 Label 列用于机器学习评估！");
+    switch (type) {
+      case "original_train":
+        setOriginalTrainFile(fileObj);
+        readColumns(fileObj);
+        break;
+      case "original_test":
+        setOriginalTestFile(fileObj);
+        break;
+      case "anonymized_train":
+        setAnonymizedTrainFile(fileObj);
+        break;
+      case "anonymized_test":
+        setAnonymizedTestFile(fileObj);
+        break;
+      default:
+        break;
+    }
+
+    message.success(`${info.file.name} uploaded successfully`);
+  };
+
+  // 从文件中读取列名
+  const readColumns = (fileObj) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const text = e.target.result;
+      const firstLine = text.split("\n")[0];
+      const columns = firstLine.split(/,|\t/).map((c) => c.trim());
+      setColumnOptions(columns);
+    };
+    reader.readAsText(fileObj);
+  };
+
+  const handleEvaluate = async () => {
+    // 验证必要的文件和参数
+    if (isMLMethod) {
+      // 机器学习评估需要四个文件
+      if (!originalTrainFile || !originalTestFile || !anonymizedTrainFile || !anonymizedTestFile) {
+        message.error("机器学习评估需要上传四个数据集文件！");
+        return;
+      }
+      
+      if (!labelColumn) {
+        message.error("请选择一个 Label 列用于机器学习评估！");
+        return;
+      }
+    } else {
+      // 普通评估只需要两个文件
+      if (!originalFile || !anonymizedFile) {
+        message.error("请上传原始数据和匿名化数据文件！");
+        return;
+      }
+    }
+    
+    if (selectedStatisticalMethods.length === 0 || selectedColumns.length === 0) {
+      message.error("请选择列和评估方法！");
       return;
     }
 
     setLoading(true);
     const formData = new FormData();
-    formData.append("original_file", originalFile);
-    formData.append("anonymized_file", anonymizedFile);
+    
+    // 根据选择的评估方法添加不同的文件
+    if (isMLMethod) {
+      formData.append("original_train_file", originalTrainFile);
+      formData.append("original_test_file", originalTestFile);
+      formData.append("anonymized_train_file", anonymizedTrainFile);
+      formData.append("anonymized_test_file", anonymizedTestFile);
+    } else {
+      formData.append("original_file", originalFile);
+      formData.append("anonymized_file", anonymizedFile);
+    }
+    
     formData.append("columns", selectedColumns.join(","));
     formData.append("metrics", selectedStatisticalMethods.join(","));
     if (labelColumn) {
@@ -135,10 +212,6 @@ const DataQualityEvaluation = () => {
     link.click();
     document.body.removeChild(link);
   };
-
-  const isMLMethod = selectedStatisticalMethods.some((m) => mlMethods.includes(m));
-  const isTextMethod = selectedStatisticalMethods.some((m) => textMethods.includes(m));
-  const isUnsupervisedMethod = selectedStatisticalMethods.some((m) => unsupervisedMethods.includes(m));
 
   const getTableColumns = () => {
     if (isMLMethod) {
@@ -232,18 +305,92 @@ const DataQualityEvaluation = () => {
         <Card className="evaluation-card">
           <Title level={2}>Data Quality Evaluation</Title>
           <Form layout="vertical">
-            <Form.Item label="Upload Original Data (CSV/TSV)">
-              <Upload beforeUpload={() => false} onChange={(info) => handleFileChange(info, "original")} accept=".csv,.tsv" showUploadList={true}>
-                <Button icon={<UploadOutlined />}>Click to Upload</Button>
-              </Upload>
-            </Form.Item>
+            {isMLMethod ? (
+              // 如果选择了机器学习方法，显示四个文件上传表单
+              <>
+                <Alert
+                  message="ML Evaluation Mode"
+                  description="Machine learning evaluation requires uploading four datasets: original training set, original test set, anonymized training set, and anonymized test set."
+                  type="info"
+                  showIcon
+                  style={{ marginBottom: 16 }}
+                />
+                
+                <Divider orientation="left">Training Sets</Divider>
+                <Form.Item label="Upload Original Training Data (CSV/TSV)">
+                  <Upload 
+                    beforeUpload={() => false} 
+                    onChange={(info) => handleMLFileChange(info, "original_train")}
+                    accept=".csv,.tsv" 
+                    showUploadList={true}
+                  >
+                    <Button icon={<UploadOutlined />}>Upload Original Training Data</Button>
+                  </Upload>
+                </Form.Item>
 
-            <Form.Item label="Upload Anonymized Data (CSV/TSV)">
-              <Upload beforeUpload={() => false} onChange={(info) => handleFileChange(info, "anonymized")} accept=".csv,.tsv" showUploadList={true}>
-                <Button icon={<UploadOutlined />}>Click to Upload</Button>
-              </Upload>
-            </Form.Item>
+                <Form.Item label="Upload Anonymized Training Data (CSV/TSV)">
+                  <Upload 
+                    beforeUpload={() => false} 
+                    onChange={(info) => handleMLFileChange(info, "anonymized_train")} 
+                    accept=".csv,.tsv" 
+                    showUploadList={true}
+                  >
+                    <Button icon={<UploadOutlined />}>Upload Anonymized Training Data</Button>
+                  </Upload>
+                </Form.Item>
+                
+                <Divider orientation="left">Test Sets</Divider>
+                <Form.Item label="Upload Original Test Data (CSV/TSV)">
+                  <Upload 
+                    beforeUpload={() => false} 
+                    onChange={(info) => handleMLFileChange(info, "original_test")}
+                    accept=".csv,.tsv" 
+                    showUploadList={true}
+                  >
+                    <Button icon={<UploadOutlined />}>Upload Original Test Data</Button>
+                  </Upload>
+                </Form.Item>
 
+                <Form.Item label="Upload Anonymized Test Data (CSV/TSV)">
+                  <Upload 
+                    beforeUpload={() => false} 
+                    onChange={(info) => handleMLFileChange(info, "anonymized_test")} 
+                    accept=".csv,.tsv" 
+                    showUploadList={true}
+                  >
+                    <Button icon={<UploadOutlined />}>Upload Anonymized Test Data</Button>
+                  </Upload>
+                </Form.Item>
+              </>
+            ) : (
+              // 常规评估只需要两个文件
+              <>
+                <Form.Item label="Upload Original Data (CSV/TSV)">
+                  <Upload 
+                    beforeUpload={() => false} 
+                    onChange={(info) => handleFileChange(info, "original")} 
+                    accept=".csv,.tsv" 
+                    showUploadList={true}
+                  >
+                    <Button icon={<UploadOutlined />}>Click to Upload</Button>
+                  </Upload>
+                </Form.Item>
+
+                <Form.Item label="Upload Anonymized Data (CSV/TSV)">
+                  <Upload 
+                    beforeUpload={() => false} 
+                    onChange={(info) => handleFileChange(info, "anonymized")} 
+                    accept=".csv,.tsv" 
+                    showUploadList={true}
+                  >
+                    <Button icon={<UploadOutlined />}>Click to Upload</Button>
+                  </Upload>
+                </Form.Item>
+              </>
+            )}
+
+            <Divider orientation="left">Evaluation Settings</Divider>
+            
             <Form.Item label="Select Columns for Evaluation">
               <Checkbox.Group options={columnOptions} value={selectedColumns} onChange={setSelectedColumns} />
             </Form.Item>
