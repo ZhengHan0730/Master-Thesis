@@ -12,7 +12,8 @@ import {
   Tabs,
   Space,
   Divider,
-  Alert
+  Alert,
+  Steps
 } from "antd";
 import { UploadOutlined, DownloadOutlined } from "@ant-design/icons";
 import {
@@ -37,6 +38,7 @@ import "./DataQualityEvaluation.css";
 const { Title } = Typography;
 const { Content } = Layout;
 const { TabPane } = Tabs;
+const { Step } = Steps;
 
 // 方法分类
 const numericMethods = ["mean", "median", "variance", "wasserstein", "ks_similarity", "pearson", "spearman"];
@@ -62,6 +64,9 @@ const DataQualityEvaluation = () => {
   const [loading, setLoading] = useState(false);
   const [resultData, setResultData] = useState([]);
   const [resultId, setResultId] = useState(null);
+  
+  // 添加步骤控制
+  const [currentStep, setCurrentStep] = useState(0);
 
   // 检查是否包含ML方法
   const isMLMethod = selectedStatisticalMethods.some((m) => mlMethods.includes(m));
@@ -131,29 +136,67 @@ const DataQualityEvaluation = () => {
     reader.readAsText(fileObj);
   };
 
-  const handleEvaluate = async () => {
-    // 验证必要的文件和参数
-    if (isMLMethod) {
-      // 机器学习评估需要四个文件
-      if (!originalTrainFile || !originalTestFile || !anonymizedTrainFile || !anonymizedTestFile) {
-        message.error("机器学习评估需要上传四个数据集文件！");
-        return;
-      }
-      
-      if (!labelColumn) {
-        message.error("请选择一个 Label 列用于机器学习评估！");
-        return;
-      }
-    } else {
-      // 普通评估只需要两个文件
-      if (!originalFile || !anonymizedFile) {
-        message.error("请上传原始数据和匿名化数据文件！");
-        return;
+  // 判断当前步骤是否可以继续
+  const canProceedToNextStep = () => {
+    if (currentStep === 0) {
+      // 第一步：至少选择一个评估方法
+      return selectedStatisticalMethods.length > 0;
+    }
+    
+    if (currentStep === 1) {
+      // 第二步：确保上传了正确的文件
+      if (isMLMethod) {
+        return originalTrainFile && originalTestFile && anonymizedTrainFile && anonymizedTestFile;
+      } else {
+        return originalFile && anonymizedFile;
       }
     }
     
-    if (selectedStatisticalMethods.length === 0 || selectedColumns.length === 0) {
-      message.error("请选择列和评估方法！");
+    if (currentStep === 2) {
+      // 第三步：选择列和标签列（如果需要）
+      if (selectedColumns.length === 0) return false;
+      if (isMLMethod && !labelColumn) return false;
+      return true;
+    }
+
+    if (currentStep === 3) {
+      // 第四步：确认页面，没有特殊验证要求，所以返回true
+      return true;
+    }
+    
+    return false;
+  };
+
+  // 处理步骤变化
+  const handleNextStep = () => {
+    if (canProceedToNextStep()) {
+      setCurrentStep(currentStep + 1);
+    } else {
+      if (currentStep === 0) {
+        message.error("请至少选择一种评估方法！");
+      } else if (currentStep === 1) {
+        if (isMLMethod) {
+          message.error("请上传所有四个数据集文件！");
+        } else {
+          message.error("请上传原始数据和匿名化数据文件！");
+        }
+      } else if (currentStep === 2) {
+        if (selectedColumns.length === 0) {
+          message.error("请选择至少一列进行评估！");
+        } else if (isMLMethod && !labelColumn) {
+          message.error("请选择一个标签列用于机器学习评估！");
+        }
+      }
+    }
+  };
+
+  const handlePrevStep = () => {
+    setCurrentStep(currentStep - 1);
+  };
+
+  const handleEvaluate = async () => {
+    if (!canProceedToNextStep()) {
+      message.error("请完成所有必要的设置！");
       return;
     }
 
@@ -194,6 +237,9 @@ const DataQualityEvaluation = () => {
       setResultData(result.summary || []);
       setResultId(result.result_id);
       message.success("数据质量评估成功！");
+      
+      // 评估完成后前进到结果页
+      setCurrentStep(4);
     } catch (error) {
       console.error("Network error:", error);
       message.error("网络错误，请检查连接并重试！");
@@ -298,15 +344,69 @@ const DataQualityEvaluation = () => {
     ];
   };
 
-  return (
-    <Layout className="quality-layout">
-      <AppHeader />
-      <Content className="quality-content">
-        <Card className="evaluation-card">
-          <Title level={2}>Data Quality Evaluation</Title>
-          <Form layout="vertical">
+  // 渲染步骤内容
+  const renderStepContent = () => {
+    switch (currentStep) {
+      case 0:
+        // 步骤1：选择评估方法
+        return (
+          <>
+            <Title level={4}>Step 1: Select Evaluation Methods</Title>
+            <Form layout="vertical">
+              <Form.Item label="Numeric Evaluation Methods">
+                <Checkbox.Group
+                  options={numericMethods.map((m) => ({ label: m, value: m }))}
+                  value={selectedStatisticalMethods.filter(m => numericMethods.includes(m))}
+                  onChange={(vals) => {
+                    const currentNonNumeric = selectedStatisticalMethods.filter(m => !numericMethods.includes(m));
+                    setSelectedStatisticalMethods([...vals, ...currentNonNumeric]);
+                  }}
+                />
+              </Form.Item>
+
+              <Form.Item label="Text Evaluation Methods">
+                <Checkbox.Group
+                  options={textMethods.map((m) => ({ label: m, value: m }))}
+                  value={selectedStatisticalMethods.filter(m => textMethods.includes(m))}
+                  onChange={(vals) => {
+                    const currentNonText = selectedStatisticalMethods.filter(m => !textMethods.includes(m));
+                    setSelectedStatisticalMethods([...vals, ...currentNonText]);
+                  }}
+                />
+              </Form.Item>
+
+              <Form.Item label="Machine Learning Evaluation Methods">
+                <Checkbox.Group
+                  options={mlMethods.map((m) => ({ label: m, value: m }))}
+                  value={selectedStatisticalMethods.filter(m => mlMethods.includes(m))}
+                  onChange={(vals) => {
+                    const currentNonML = selectedStatisticalMethods.filter(m => !mlMethods.includes(m));
+                    setSelectedStatisticalMethods([...vals, ...currentNonML]);
+                  }}
+                />
+              </Form.Item>
+
+              <Form.Item label="Unsupervised Learning Evaluation Methods">
+                <Checkbox.Group
+                  options={unsupervisedMethods.map((m) => ({ label: m, value: m }))}
+                  value={selectedStatisticalMethods.filter(m => unsupervisedMethods.includes(m))}
+                  onChange={(vals) => {
+                    const currentNonUnsupervised = selectedStatisticalMethods.filter(m => !unsupervisedMethods.includes(m));
+                    setSelectedStatisticalMethods([...vals, ...currentNonUnsupervised]);
+                  }}
+                />
+              </Form.Item>
+            </Form>
+          </>
+        );
+        
+      case 1:
+        // 步骤2：上传文件
+        return (
+          <>
+            <Title level={4}>Step 2: Upload Data Files</Title>
             {isMLMethod ? (
-              // 如果选择了机器学习方法，显示四个文件上传表单
+              // ML评估需要四个文件
               <>
                 <Alert
                   message="ML Evaluation Mode"
@@ -388,143 +488,161 @@ const DataQualityEvaluation = () => {
                 </Form.Item>
               </>
             )}
-
-            <Divider orientation="left">Evaluation Settings</Divider>
+          </>
+        );
+        
+      case 2:
+        // 步骤3：选择列
+        return (
+          <>
+            <Title level={4}>Step 3: Select Columns for Evaluation</Title>
             
-            <Form.Item label="Select Columns for Evaluation">
-              <Checkbox.Group options={columnOptions} value={selectedColumns} onChange={setSelectedColumns} />
-            </Form.Item>
-
-            <Form.Item label="Numeric Evaluation Methods">
-              <Checkbox.Group
-                options={numericMethods.map((m) => ({ label: m, value: m }))}
-                value={selectedStatisticalMethods.filter(m => numericMethods.includes(m))}
-                onChange={(vals) => {
-                  const currentNonNumeric = selectedStatisticalMethods.filter(m => !numericMethods.includes(m));
-                  setSelectedStatisticalMethods([...vals, ...currentNonNumeric]);
-                }}
-              />
-            </Form.Item>
-
-            <Form.Item label="Text Evaluation Methods">
-              <Checkbox.Group
-                options={textMethods.map((m) => ({ label: m, value: m }))}
-                value={selectedStatisticalMethods.filter(m => textMethods.includes(m))}
-                onChange={(vals) => {
-                  const currentNonText = selectedStatisticalMethods.filter(m => !textMethods.includes(m));
-                  setSelectedStatisticalMethods([...vals, ...currentNonText]);
-                }}
-              />
-            </Form.Item>
-
-            <Form.Item label="Machine Learning Evaluation Methods">
-              <Checkbox.Group
-                options={mlMethods.map((m) => ({ label: m, value: m }))}
-                value={selectedStatisticalMethods.filter(m => mlMethods.includes(m))}
-                onChange={(vals) => {
-                  const currentNonML = selectedStatisticalMethods.filter(m => !mlMethods.includes(m));
-                  setSelectedStatisticalMethods([...vals, ...currentNonML]);
-                }}
-              />
-            </Form.Item>
-
-            <Form.Item label="Unsupervised Learning Evaluation Methods">
-              <Checkbox.Group
-                options={unsupervisedMethods.map((m) => ({ label: m, value: m }))}
-                value={selectedStatisticalMethods.filter(m => unsupervisedMethods.includes(m))}
-                onChange={(vals) => {
-                  const currentNonUnsupervised = selectedStatisticalMethods.filter(m => !unsupervisedMethods.includes(m));
-                  setSelectedStatisticalMethods([...vals, ...currentNonUnsupervised]);
-                }}
-              />
-            </Form.Item>
-
-            {selectedStatisticalMethods.some((m) => mlMethods.includes(m)) && (
-              <Form.Item label="Select Label Column for Machine Learning">
-                <Checkbox.Group
-                  options={columnOptions}
-                  value={labelColumn ? [labelColumn] : []}
-                  onChange={(vals) => setLabelColumn(vals[0] || null)}
-                />
+            <Form layout="vertical">
+              <Form.Item label="Select Columns for Evaluation">
+                <Checkbox.Group options={columnOptions} value={selectedColumns} onChange={setSelectedColumns} />
               </Form.Item>
-            )}
 
-            <Form.Item>
-              <Button type="primary" onClick={handleEvaluate} loading={loading} block>
-                {loading ? "Evaluating..." : "Submit Evaluation"}
-              </Button>
-            </Form.Item>
-          </Form>
-
-          {resultData.length > 0 && (
-            <>
-              <Title level={4} style={{ marginTop: 30 }}>
-                Evaluation Results (ID: {resultId})
-              </Title>
-
-              <Button icon={<DownloadOutlined />} onClick={handleDownloadCSV} style={{ marginBottom: 16 }}>
-                Download CSV
-              </Button>
-
-              <Table 
-                dataSource={resultData.map((item, index) => ({ key: index, ...item }))} 
-                pagination={false} 
-                bordered 
-                columns={getTableColumns()} 
-              />
-
-              {/* ML model evaluation charts */}
               {isMLMethod && (
-                <div style={{ marginTop: 40 }}>
-                  <Title level={4}>Machine Learning Model Evaluation</Title>
-                  
-                  <Tabs defaultActiveKey="1">
+                <Form.Item label="Select Label Column for Machine Learning">
+                  <Checkbox.Group
+                    options={columnOptions}
+                    value={labelColumn ? [labelColumn] : []}
+                    onChange={(vals) => setLabelColumn(vals[0] || null)}
+                  />
+                </Form.Item>
+              )}
+            </Form>
+          </>
+        );
+        
+      case 3:
+        // 步骤4：确认和提交
+        return (
+          <>
+            <Title level={4}>Step 4: Review and Submit</Title>
+            
+            <Card title="Evaluation Summary" bordered={false} style={{ marginBottom: 20 }}>
+              <p><strong>Selected Evaluation Methods:</strong> {selectedStatisticalMethods.join(", ")}</p>
+              <p><strong>Selected Columns:</strong> {selectedColumns.join(", ")}</p>
+              {isMLMethod && <p><strong>Label Column:</strong> {labelColumn}</p>}
+              <p><strong>Files Uploaded:</strong> {isMLMethod ? 
+                "Original Train, Original Test, Anonymized Train, Anonymized Test" : 
+                "Original Data, Anonymized Data"}
+              </p>
+            </Card>
+            
+            <Alert
+              message="Ready to Evaluate"
+              description="Review your settings above. If everything looks correct, click the Submit Evaluation button to start the evaluation process."
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          </>
+        );
+        
+      case 4:
+        // 步骤5：查看结果
+        return (
+          <>
+            <Title level={4}>Evaluation Results (ID: {resultId})</Title>
+            
+            <Button 
+              icon={<DownloadOutlined />} 
+              onClick={handleDownloadCSV} 
+              style={{ marginBottom: 16 }}
+              disabled={!resultId}
+            >
+              Download CSV
+            </Button>
+
+            {resultData.length > 0 ? (
+              <>
+                <Table 
+                  dataSource={resultData.map((item, index) => ({ key: index, ...item }))} 
+                  pagination={false} 
+                  bordered 
+                  columns={getTableColumns()} 
+                />
+
+                {/* ML model evaluation charts */}
+                {isMLMethod && (
+                  <div style={{ marginTop: 40 }}>
+                    <Title level={4}>Machine Learning Model Evaluation</Title>
+                    
+                    <Tabs defaultActiveKey="1">
                     {selectedStatisticalMethods.includes("random-forest") && getRFResults().length > 0 && (
                       <TabPane tab="Random Forest" key="1">
                         <ResponsiveContainer width="100%" height={300}>
                           <BarChart
-                            data={getRFResults()}
+                            data={[
+                              {
+                                metric: "Accuracy",
+                                Original: getRFResults().find(r => r.dataset === "Original")?.accuracy || 0,
+                                Anonymized: getRFResults().find(r => r.dataset === "Anonymized")?.accuracy || 0
+                              },
+                              {
+                                metric: "F1 Score",
+                                Original: getRFResults().find(r => r.dataset === "Original")?.f1_score || 0,
+                                Anonymized: getRFResults().find(r => r.dataset === "Anonymized")?.f1_score || 0
+                              },
+                              {
+                                metric: "Precision",
+                                Original: getRFResults().find(r => r.dataset === "Original")?.precision || 0,
+                                Anonymized: getRFResults().find(r => r.dataset === "Anonymized")?.precision || 0
+                              }
+                            ]}
                             margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                           >
                             <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="dataset" />
+                            <XAxis dataKey="metric" />
                             <YAxis />
                             <Tooltip />
                             <Legend />
-                            <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
-                              <LabelList dataKey="accuracy" position="top" />
+                            <Bar dataKey="Original" name="Original" fill="#8884d8">
+                              <LabelList dataKey="Original" position="top" />
                             </Bar>
-                            <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
-                              <LabelList dataKey="f1_score" position="top" />
-                            </Bar>
-                            <Bar dataKey="precision" name="Precision" fill="#ffc658">
-                              <LabelList dataKey="precision" position="top" />
+                            <Bar dataKey="Anonymized" name="Anonymized" fill="#82ca9d">
+                              <LabelList dataKey="Anonymized" position="top" />
                             </Bar>
                           </BarChart>
                         </ResponsiveContainer>
                       </TabPane>
                     )}
-                    
+
                     {selectedStatisticalMethods.includes("svm") && getSVMResults().length > 0 && (
                       <TabPane tab="SVM" key="2">
                         <ResponsiveContainer width="100%" height={300}>
                           <BarChart
-                            data={getSVMResults()}
+                            data={[
+                              {
+                                metric: "Accuracy",
+                                Original: getSVMResults().find(r => r.dataset === "Original")?.accuracy || 0,
+                                Anonymized: getSVMResults().find(r => r.dataset === "Anonymized")?.accuracy || 0
+                              },
+                              {
+                                metric: "F1 Score",
+                                Original: getSVMResults().find(r => r.dataset === "Original")?.f1_score || 0,
+                                Anonymized: getSVMResults().find(r => r.dataset === "Anonymized")?.f1_score || 0
+                              },
+                              {
+                                metric: "Precision",
+                                Original: getSVMResults().find(r => r.dataset === "Original")?.precision || 0,
+                                Anonymized: getSVMResults().find(r => r.dataset === "Anonymized")?.precision || 0
+                              }
+                            ]}
                             margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                           >
                             <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="dataset" />
+                            <XAxis dataKey="metric" />
                             <YAxis />
                             <Tooltip />
                             <Legend />
-                            <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
-                              <LabelList dataKey="accuracy" position="top" />
+                            <Bar dataKey="Original" name="Original" fill="#8884d8">
+                              <LabelList dataKey="Original" position="top" />
                             </Bar>
-                            <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
-                              <LabelList dataKey="f1_score" position="top" />
-                            </Bar>
-                            <Bar dataKey="precision" name="Precision" fill="#ffc658">
-                              <LabelList dataKey="precision" position="top" />
+                            <Bar dataKey="Anonymized" name="Anonymized" fill="#82ca9d">
+                              <LabelList dataKey="Anonymized" position="top" />
                             </Bar>
                           </BarChart>
                         </ResponsiveContainer>
@@ -535,135 +653,161 @@ const DataQualityEvaluation = () => {
                       <TabPane tab="MLP" key="3">
                         <ResponsiveContainer width="100%" height={300}>
                           <BarChart
-                            data={getMLPResults()}
+                            data={[
+                              {
+                                metric: "Accuracy",
+                                Original: getMLPResults().find(r => r.dataset === "Original")?.accuracy || 0,
+                                Anonymized: getMLPResults().find(r => r.dataset === "Anonymized")?.accuracy || 0
+                              },
+                              {
+                                metric: "F1 Score",
+                                Original: getMLPResults().find(r => r.dataset === "Original")?.f1_score || 0,
+                                Anonymized: getMLPResults().find(r => r.dataset === "Anonymized")?.f1_score || 0
+                              },
+                              {
+                                metric: "Precision",
+                                Original: getMLPResults().find(r => r.dataset === "Original")?.precision || 0,
+                                Anonymized: getMLPResults().find(r => r.dataset === "Anonymized")?.precision || 0
+                              }
+                            ]}
                             margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
                           >
                             <CartesianGrid strokeDasharray="3 3" />
-                            <XAxis dataKey="dataset" />
+                            <XAxis dataKey="metric" />
                             <YAxis />
                             <Tooltip />
                             <Legend />
-                            <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
-                              <LabelList dataKey="accuracy" position="top" />
+                            <Bar dataKey="Original" name="Original" fill="#8884d8">
+                              <LabelList dataKey="Original" position="top" />
                             </Bar>
-                            <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
-                              <LabelList dataKey="f1_score" position="top" />
-                            </Bar>
-                            <Bar dataKey="precision" name="Precision" fill="#ffc658">
-                              <LabelList dataKey="precision" position="top" />
+                            <Bar dataKey="Anonymized" name="Anonymized" fill="#82ca9d">
+                              <LabelList dataKey="Anonymized" position="top" />
                             </Bar>
                           </BarChart>
                         </ResponsiveContainer>
                       </TabPane>
                     )}
-                    
-                    {shouldShowComparison() && (
-                      <TabPane tab="Model Comparison" key="4">
-                        <div style={{ display: "flex", justifyContent: "space-around" }}>
-                          <div style={{ width: "45%" }}>
-                            <Title level={5} style={{ textAlign: "center" }}>Original Data</Title>
-                            <ResponsiveContainer width="100%" height={300}>
-                              <BarChart
-                                data={resultData.filter(r => r.dataset === "Original" && mlMethods.includes(r.metric))}
-                                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                              >
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="metric" />
-                                <YAxis />
-                                <Tooltip />
-                                <Legend />
-                                <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
-                                  <LabelList dataKey="accuracy" position="top" />
-                                </Bar>
-                                <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
-                                  <LabelList dataKey="f1_score" position="top" />
-                                </Bar>
-                                <Bar dataKey="precision" name="Precision" fill="#ffc658">
-                                  <LabelList dataKey="precision" position="top" />
-                                </Bar>
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                          
-                          <div style={{ width: "45%" }}>
-                            <Title level={5} style={{ textAlign: "center" }}>Anonymized Data</Title>
-                            <ResponsiveContainer width="100%" height={300}>
-                              <BarChart
-                                data={resultData.filter(r => r.dataset === "Anonymized" && mlMethods.includes(r.metric))}
-                                margin={{ top: 20, right: 30, left: 20, bottom: 5 }}
-                              >
-                                <CartesianGrid strokeDasharray="3 3" />
-                                <XAxis dataKey="metric" />
-                                <YAxis />
-                                <Tooltip />
-                                <Legend />
-                                <Bar dataKey="accuracy" name="Accuracy" fill="#8884d8">
-                                  <LabelList dataKey="accuracy" position="top" />
-                                </Bar>
-                                <Bar dataKey="f1_score" name="F1 Score" fill="#82ca9d">
-                                  <LabelList dataKey="f1_score" position="top" />
-                                </Bar>
-                                <Bar dataKey="precision" name="Precision" fill="#ffc658">
-                                  <LabelList dataKey="precision" position="top" />
-                                </Bar>
-                              </BarChart>
-                            </ResponsiveContainer>
-                          </div>
-                        </div>
-                      </TabPane>
-                    )}
-                  </Tabs>
-                </div>
-              )}
+                    </Tabs>
+                  </div>
+                )}
 
-              {/* Unsupervised Learning Evaluation charts */}
-              {isUnsupervisedMethod && getUnsupervisedResults().length > 0 && (
-                <div style={{ marginTop: 40 }}>
-                  <Title level={4}>Unsupervised Learning Evaluation</Title>
-                  
-                  <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
-                    <ResponsiveContainer width="80%" height={400}>
-                      <RadarChart 
-                        cx="50%" 
-                        cy="50%" 
-                        outerRadius="80%" 
-                        data={prepareUnsupervisedRadarData()}
-                      >
-                        <PolarGrid />
-                        <PolarAngleAxis dataKey="subject" />
-                        <PolarRadiusAxis angle={30} domain={[0, 1]} />
-                        <Radar
-                          name="Original Data"
-                          dataKey="original"
-                          stroke="#8884d8"
-                          fill="#8884d8"
-                          fillOpacity={0.6}
-                        />
-                        <Radar
-                          name="Anonymized Data"
-                          dataKey="anonymized"
-                          stroke="#82ca9d"
-                          fill="#82ca9d"
-                          fillOpacity={0.6}
-                        />
-                        <Legend />
-                        <Tooltip />
-                      </RadarChart>
-                    </ResponsiveContainer>
+                {/* Unsupervised Learning Evaluation charts */}
+                {isUnsupervisedMethod && getUnsupervisedResults().length > 0 && (
+                  <div style={{ marginTop: 40 }}>
+                    <Title level={4}>Unsupervised Learning Evaluation</Title>
+                    
+                    <div style={{ display: "flex", justifyContent: "center", marginTop: 20 }}>
+                      <ResponsiveContainer width="80%" height={400}>
+                        <RadarChart 
+                          cx="50%" 
+                          cy="50%" 
+                          outerRadius="80%" 
+                          data={prepareUnsupervisedRadarData()}
+                        >
+                          <PolarGrid />
+                          <PolarAngleAxis dataKey="subject" />
+                          <PolarRadiusAxis angle={30} domain={[0, 1]} />
+                          <Radar
+                            name="Original Data"
+                            dataKey="original"
+                            stroke="#8884d8"
+                            fill="#8884d8"
+                            fillOpacity={0.6}
+                          />
+                          <Radar
+                            name="Anonymized Data"
+                            dataKey="anonymized"
+                            stroke="#82ca9d"
+                            fill="#82ca9d"
+                            fillOpacity={0.6}
+                          />
+                          <Legend />
+                          <Tooltip />
+                        </RadarChart>
+                      </ResponsiveContainer>
+                    </div>
+                    
+                    <div style={{ marginTop: 20 }}>
+                      <Title level={5}>Unsupervised Learning Metrics Explanation:</Title>
+                      <ul>
+                        <li><strong>KMeans Silhouette:</strong> Measures how well data points fit within their clusters. Higher values (closer to 1) indicate better-defined clusters.</li>
+                        <li><strong>KNN Neighbor Preservation:</strong> Measures how well the K-nearest neighbors are preserved after anonymization. Higher values indicate better preservation of local data relationships.</li>
+                        <li><strong>Local Outlier Factor:</strong> Assesses how outlier detection is affected by anonymization. Similar values between original and anonymized data indicate better preservation of anomaly patterns.</li>
+                      </ul>
+                    </div>
                   </div>
-                  
-                  <div style={{ marginTop: 20 }}>
-                    <Title level={5}>Unsupervised Learning Metrics Explanation:</Title>
-                    <ul>
-                      <li><strong>KMeans Silhouette:</strong> Measures how well data points fit within their clusters. Higher values (closer to 1) indicate better-defined clusters.</li>
-                      <li><strong>KNN Neighbor Preservation:</strong> Measures how well the K-nearest neighbors are preserved after anonymization. Higher values indicate better preservation of local data relationships.</li>
-                      <li><strong>Local Outlier Factor:</strong> Assesses how outlier detection is affected by anonymization. Similar values between original and anonymized data indicate better preservation of anomaly patterns.</li>
-                    </ul>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+                )}
+              </>
+            ) : (
+              <Alert
+                message="No Results"
+                description="No evaluation results available yet. Please check if the evaluation was completed successfully."
+                type="warning"
+                showIcon
+              />
+            )}
+            
+            <div style={{ marginTop: 20 }}>
+              <Button type="primary" onClick={() => setCurrentStep(0)}>
+                Start New Evaluation
+              </Button>
+            </div>
+          </>
+        );
+        
+      default:
+        return null;
+    }
+  };
+
+  // 渲染底部按钮
+  const renderStepButtons = () => {
+    if (currentStep === 4) return null; // 结果页不需要导航按钮
+    
+    return (
+      <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between' }}>
+        {currentStep > 0 && (
+          <Button onClick={handlePrevStep}>
+            Previous
+          </Button>
+        )}
+        
+        <div style={{ flex: 1 }}></div>
+        
+        {currentStep < 3 ? (
+          <Button type="primary" onClick={handleNextStep}>
+            Next
+          </Button>
+        ) : (
+          <Button type="primary" onClick={handleEvaluate} loading={loading}>
+            {loading ? "Evaluating..." : "Submit Evaluation"}
+          </Button>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <Layout className="quality-layout">
+      <AppHeader />
+      <Content className="quality-content">
+        <Card className="evaluation-card">
+          <Title level={2}>Data Quality Evaluation</Title>
+          
+          {/* 步骤指示器 */}
+          <Steps current={currentStep} style={{ marginBottom: 30 }}>
+            <Step title="Select Methods" />
+            <Step title="Upload Files" />
+            <Step title="Select Columns" />
+            <Step title="Review & Submit" />
+            <Step title="Results" />
+          </Steps>
+          
+          {/* 每个步骤的内容 */}
+          {renderStepContent()}
+          
+          {/* 步骤按钮导航 */}
+          {renderStepButtons()}
         </Card>
       </Content>
     </Layout>

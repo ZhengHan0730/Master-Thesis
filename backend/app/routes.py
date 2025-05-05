@@ -2037,11 +2037,11 @@ def data_quality_evaluation():
             except Exception as e:
                 return jsonify({'error': f'MLP 评估失败: {str(e)}'}), 400
         
-        # 生成结果ID并保存结果
-        result_id = str(uuid.uuid4())
-        quality_results[result_id] = results
+    # 生成结果ID并保存结果
+    result_id = str(uuid.uuid4())
+    quality_results[result_id] = results
         
-        return jsonify({'result_id': result_id, 'summary': results})
+    return jsonify({'result_id': result_id, 'summary': results})
 
 # 获取评估后结果
 @bp.route('/quality/result/<result_id>', methods=['GET'])
