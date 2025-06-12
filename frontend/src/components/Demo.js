@@ -61,8 +61,12 @@ const Demo = () => {
               Choose from supported algorithms such as k-Anonymity, l-Diversity, or t-Closeness.</Paragraph>
             </li>
             <li>
+              <Paragraph><strong>Select dataset splite and set the splite ratio</strong><br />
+              Enable to split the original dataset into training and test sets before anonymization. </Paragraph>
+            </li>
+            <li>
               <Paragraph><strong>Set Values</strong><br />
-              Enter values for k (k-value) or l (l-value) as needed for your chosen algorithm.</Paragraph>
+              Enter values as needed for your chosen algorithm.</Paragraph>
             </li>
             <li>
               <Paragraph><strong>Adjust Suppression Rate</strong><br />
@@ -73,7 +77,7 @@ const Demo = () => {
               Click the "Submit" button to apply the selected algorithm and view the processed results.</Paragraph>
             </li>
             <div style={{ textAlign: 'center', margin: '20px 0' }}>
-            <img src="algorithm.png" alt="Application Page Screenshot" style={{ maxWidth: '100%', height: 'auto' }} />
+            <img src="algorithm.png" alt="Application Page Screenshot" style={{ maxWidth: '30%', height: 'auto' }} />
           </div>
           </ol>
 
@@ -82,6 +86,50 @@ const Demo = () => {
             After submission, you will be able to review the anonymized dataset. You can download the processed data for further analysis or integration into your projects.
           </Paragraph>
           <Paragraph style={{ textAlign: 'left', maxWidth: '800px', margin: '0 auto' }}>
+          
+
+          <Title level={3}>Evaluation of Anonymized Data</Title>
+          <ol>
+            <li>
+              <Paragraph><strong>Select Evaluation Methods</strong><br />
+              Choose statistical and machine learning methods to evaluate the quality of your anonymized dataset. Options include mean, median, variance, Wasserstein distance, and more.</Paragraph>
+              <div style={{ textAlign: 'center', margin: '20px 0' }}>
+                <img src="select_methods.png" alt="Select Evaluation Methods" style={{ maxWidth: '100%', height: 'auto' }} />
+              </div>
+            </li>
+
+            <li>
+              <Paragraph><strong>Upload Your Data Files</strong><br />
+              Upload both your original dataset and the anonymized dataset for comparison. Files must be in CSV or TSV format.</Paragraph>
+              <div style={{ textAlign: 'center', margin: '20px 0' }}>
+                <img src="uploads_files.png" alt="Upload Data Files" style={{ maxWidth: '100%', height: 'auto' }} />
+              </div>
+            </li>
+
+            <li>
+              <Paragraph><strong>Select Columns for Evaluation</strong><br />
+              Specify the columns that you want to evaluate. Typically, these include quasi-identifiers or sensitive attributes.</Paragraph>
+              <div style={{ textAlign: 'center', margin: '20px 0' }}>
+                <img src="select_columns.png" alt="Select Columns for Evaluation" style={{ maxWidth: '100%', height: 'auto' }} />
+              </div>
+            </li>
+
+            <li>
+              <Paragraph><strong>Review and Submit</strong><br />
+              Review the selected methods, uploaded files, and columns before starting the evaluation. Confirm your selections and click "Submit Evaluation" to begin.</Paragraph>
+              <div style={{ textAlign: 'center', margin: '20px 0' }}>
+                <img src="review_and_submit.png" alt="Review and Submit" style={{ maxWidth: '100%', height: 'auto' }} />
+              </div>
+            </li>
+
+            <li>
+              <Paragraph><strong>View Evaluation Results</strong><br />
+              After processing, the results page displays metrics comparing original and anonymized data, showing differences in statistical values and errors. You can download these results for further examination.</Paragraph>
+              <div style={{ textAlign: 'center', margin: '20px 0' }}>
+                <img src="evaluation_result.png" alt="Evaluation Results" style={{ maxWidth: '100%', height: 'auto' }} />
+              </div>
+            </li>
+          </ol>
           <Link href="Developer Guidelines.pdf" download>
             Developer guideline help file download.
           </Link>
