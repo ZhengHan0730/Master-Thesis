@@ -1,3 +1,8 @@
+This is the repository for the thesis work "Data Anonymization: A Privacy
+Enhancement Toolbox for Data
+De-identification and its Impact on
+Data Quality" done at Communication Systems Group, University of Zurich, supervised by Mr. Weijie Niu, Dr. Alberto Huertas Celdran and Prof. Dr. Burkhard Stiller.
+
 # Developer Guideline
 
 This document provides the guidelines for users to launch the application from both frontend and backend which including two parts, one is the installation and run the Data Anonymity Tool (PREDANO) in Apple's MacOS operation system. For other operating systems, such as UNIX or Windows, you can search online for operations similar to the macOS procedures described below. My data anonymization platform (PREDANO) can be obtained via the GitHub address.Alternatively, the platform is also accessible through the GitLab address in UZH IFI.
